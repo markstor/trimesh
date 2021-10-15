@@ -228,7 +228,8 @@ def sweep_polygon(polygon,
 
     # Extract 2D vertices and triangulation
     verts_2d = np.array(polygon.exterior)[:-1]
-    base_verts_2d, faces_2d = triangulate_polygon(polygon, **kwargs)
+    base_verts_2d, faces_2d = triangulate_polygon(
+        polygon, **kwargs)
     n = len(verts_2d)
 
     # Create basis for first planar polygon cap
@@ -717,7 +718,7 @@ def uv_sphere(radius=1.0,
        Mesh of UV sphere with specified parameters
     """
 
-    count = np.array(count, dtype=np.int)
+    count = np.array(count, dtype=np.int64)
     count += np.mod(count, 2)
     count[1] *= 2
 
@@ -792,7 +793,7 @@ def capsule(height=1.0,
     """
     height = float(height)
     radius = float(radius)
-    count = np.array(count, dtype=np.int)
+    count = np.array(count, dtype=np.int64)
     count += np.mod(count, 2)
 
     # create a theta where there is a double band around the equator

@@ -165,20 +165,20 @@ def face_adjacency_radius(mesh):
     Returns
     -------------
     radii : (len(self.face_adjacency),) float
-        Approximate radius between faces
-        Parallel faces will have a value of np.inf
+      Approximate radius between faces
+      Parallel faces will have a value of np.inf
     span :  (len(self.face_adjacency),) float
-        Perpendicular projection distance of two
-        unshared vertices onto the shared edge
+      Perpendicular projection distance of two
+      unshared vertices onto the shared edge
     """
 
     # solve for the radius of the adjacent faces
-    #         distance
-    # R = ------------------
-    #     2 * sin(theta / 2)
+    #       distance
+    # R = ---------------
+    #     2 * sin(theta)
     nonzero = mesh.face_adjacency_angles > np.radians(.01)
     denominator = np.abs(
-        2.0 * np.sin(mesh.face_adjacency_angles[nonzero] / 1.0))
+        2.0 * np.sin(mesh.face_adjacency_angles[nonzero]))
 
     # consider the distance between the non- shared vertices of the
     # face adjacency pair as the key distance
@@ -287,7 +287,7 @@ def facets(mesh, engine=None):
     # a common failure mode is two faces that are very narrow with a slight
     # angle between them, so here we divide by the perpendicular span
     # to penalize very narrow faces, and then square it just for fun
-    parallel = np.ones(len(radii), dtype=np.bool)
+    parallel = np.ones(len(radii), dtype=bool)
     # if span is zero we know faces are small/parallel
     nonzero = np.abs(span) > tol.zero
     # faces with a radii/span ratio larger than a threshold pass
@@ -393,7 +393,7 @@ def connected_components(edges,
 
         # we have to remove results that contain nodes outside
         # of the specified node set and reindex
-        contained = np.zeros(node_count, dtype=np.bool)
+        contained = np.zeros(node_count, dtype=bool)
         contained[nodes] = True
         index = np.arange(node_count, dtype=np.int64)[contained]
         components = grouping.group(labels[contained], min_len=min_len)
@@ -428,7 +428,7 @@ def connected_components(edges,
     node_count = np.max(counts) + 1
 
     # remove edges that don't have both nodes in the node set
-    mask = np.zeros(node_count, dtype=np.bool)
+    mask = np.zeros(node_count, dtype=bool)
     mask[nodes] = True
     edges_ok = mask[edges].all(axis=1)
     edges = edges[edges_ok]
@@ -448,9 +448,9 @@ def connected_components(edges,
         try:
             return function()
         # will be raised if the library didn't import correctly above
-        except NameError:
+        except BaseException:
             continue
-    raise ImportError('No connected component engines available!')
+    raise ImportError('no graph engines available!')
 
 
 def connected_component_labels(edges, node_count=None):
@@ -707,7 +707,7 @@ def edges_to_coo(edges, count=None, data=None):
     # if no data is specified set every specified edge
     # to True
     if data is None:
-        data = np.ones(len(edges), dtype=np.bool)
+        data = np.ones(len(edges), dtype=bool)
 
     matrix = coo_matrix((data, edges.T),
                         dtype=data.dtype,
@@ -749,7 +749,7 @@ def neighbors(edges, max_index=None, directed=False):
     return array
 
 
-def smoothed(mesh, angle=None, facet_minarea=15):
+def smoothed(mesh, angle=None, facet_minarea=10):
     """
     Return a non- watertight version of the mesh which
     will render nicely with smooth shading by
@@ -773,14 +773,14 @@ def smoothed(mesh, angle=None, facet_minarea=15):
       Geometry with disconnected face patches
     """
     if angle is None:
-        angle = np.radians(30)
+        angle = np.radians(20)
 
     # if the mesh has no adjacent faces return a copy
     if len(mesh.face_adjacency) == 0:
         return mesh.copy()
 
     # face pairs below angle threshold
-    angle_ok = mesh.face_adjacency_angles <= angle
+    angle_ok = mesh.face_adjacency_angles < angle
     # subset of face adjacency
     adjacency = mesh.face_adjacency[angle_ok]
 
@@ -800,11 +800,10 @@ def smoothed(mesh, angle=None, facet_minarea=15):
                 # mask for removing adjacency pairs where
                 # one of the faces is contained in a facet
                 mask = np.ones(len(mesh.faces),
-                               dtype=np.bool)
+                               dtype=bool)
                 mask[np.hstack(facets)] = False
                 # apply the mask to adjacency
-                adjacency = adjacency[
-                    mask[adjacency].all(axis=1)]
+                adjacency = adjacency[mask[adjacency].all(axis=1)]
                 # nodes are no longer every faces
                 nodes = np.unique(adjacency)
         except BaseException:
@@ -813,7 +812,7 @@ def smoothed(mesh, angle=None, facet_minarea=15):
     # run connected components on facet adjacency
     components = connected_components(
         adjacency,
-        min_len=1,
+        min_len=2,
         nodes=nodes)
 
     # add back coplanar groups if any exist

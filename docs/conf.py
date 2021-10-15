@@ -26,8 +26,7 @@ def abspath(rel):
     return os.path.abspath(os.path.join(cwd, rel))
 
 
-extensions = ['sphinx.ext.napoleon',
-              'autodocsumm']
+extensions = ['sphinx.ext.napoleon']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -96,10 +95,13 @@ html_theme_options = {
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
+# custom css
+html_css_files = [
+    '_static/custom.css',
+]
+
 html_context = {
-    'css_files': [
-        '_static/custom.css',  # override non-wrapping tables in RTD theme
-    ],
+
     "display_github": True,  # Add 'Edit on Github' link instead of 'View page source'
     "github_user": "mikedh",
     "github_repo": "trimesh",
@@ -110,8 +112,8 @@ html_context = {
 # Output file base name for HTML help builder.
 htmlhelp_basename = 'trimeshdoc'
 
-# -- Extensions configuration ----------------------------------------
-
+# -- Extensions configuration ----------------------------------
 autodoc_default_options = {
     'autosummary': True,
+    'special-members': '__init__',
 }

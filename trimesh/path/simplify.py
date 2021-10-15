@@ -214,7 +214,7 @@ def merge_colinear(points, scale):
     projection_ratio = np.max((projection / direction_norm[1:],
                                projection / direction_norm[:-1]), axis=0)
 
-    mask = np.ones(len(points), dtype=np.bool)
+    mask = np.ones(len(points), dtype=bool)
     # since we took diff, we need to offset by one
     mask[1:-1][projection_ratio < 1e-4 * scale] = False
 
@@ -372,7 +372,7 @@ def simplify_basic(drawing, process=False, **kwargs):
     # so all closed paths are now represented by a single entity
     cache.cache.update({
         'paths': np.arange(len(entities_new)).reshape((-1, 1)),
-        'path_valid': np.ones(len(entities_new), dtype=np.bool),
+        'path_valid': np.ones(len(entities_new), dtype=bool),
         'dangling': np.array([])})
 
     # force recompute of exact bounds
@@ -409,15 +409,14 @@ def simplify_spline(path, smooth=None, verbose=False):
     scale = path.scale
 
     for discrete in path.discrete:
-        circle = is_circle(discrete,
-                           scale=scale,
-                           verbose=verbose)
+        circle = is_circle(
+            discrete, scale=scale, verbose=verbose)
         if circle is not None:
             # the points are circular enough for our high standards
             # so replace them with a closed Arc entity
-            new_entities.append(entities.Arc(points=np.arange(3) +
-                                             len(new_vertices),
-                                             closed=True))
+            new_entities.append(entities.Arc(
+                points=np.arange(3) + len(new_vertices),
+                closed=True))
             new_vertices.extend(circle)
             continue
 

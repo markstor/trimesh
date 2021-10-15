@@ -559,7 +559,7 @@ def convert_entities(
     return vertices, entities
 
 
-def export_dxf(path, layers=None):
+def export_dxf(path, only_layers=None):
     """
     Export a 2D path object to a DXF file.
 
@@ -567,7 +567,7 @@ def export_dxf(path, layers=None):
     ----------
     path : trimesh.path.path.Path2D
       Input geometry to export
-    layers : None, set or iterable
+    only_layers : None or set
       If passed only export the layers specified
 
     Returns
@@ -577,7 +577,7 @@ def export_dxf(path, layers=None):
     """
     # get the TEMPLATES for exporting DXF files
     TEMPLATES = {k: Template(v) for k, v in
-                 resources.get('dxf.json.template',
+                 resources.get('templates/dxf.json',
                                decode_json=True).items()}
 
     def format_points(points,
@@ -610,10 +610,10 @@ def export_dxf(path, layers=None):
         three = util.stack_3D(points)
         if increment:
             group = np.tile(
-                np.arange(len(three), dtype=np.int).reshape((-1, 1)),
+                np.arange(len(three), dtype=np.int64).reshape((-1, 1)),
                 (1, 3))
         else:
-            group = np.zeros((len(three), 3), dtype=np.int)
+            group = np.zeros((len(three), 3), dtype=np.int64)
         group += [10, 20, 30]
 
         if as_2D:
@@ -790,9 +790,8 @@ def export_dxf(path, layers=None):
     for e, layer in zip(path.entities, path.layers):
         name = type(e).__name__
         # only export specified layers
-        if layers is not None:
-            if layer not in layers:
-                continue
+        if only_layers is not None and layer not in only_layers:
+            continue
         if name in conversions:
             converted = conversions[name](e, path.vertices).strip()
             if len(converted) > 0:

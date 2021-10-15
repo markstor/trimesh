@@ -192,7 +192,7 @@ def _parse_node(node,
                     color = s['COLOR'][0][4].data
                     color_index = primitive.index[:, :, s['COLOR'][0][0]]
                     colors = color[color_index].reshape(
-                        len(color_index) * 3, 3)
+                        len(color_index) * 3, -1)
 
                 faces = np.arange(
                     vertices.shape[0]).reshape(
@@ -313,7 +313,7 @@ def _parse_material(effect, resolver):
     if (effect.transparent is not None
             and not isinstance(effect.transparent, collada.material.Map)):
         baseColorFactor = tuple(
-            np.append(baseColorFactor[:3], float(int(255 * effect.transparent[3]))))
+            np.append(baseColorFactor[:3], float(effect.transparent[3])))
 
     return visual.material.PBRMaterial(
         emissiveFactor=emissiveFactor,

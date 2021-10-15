@@ -96,12 +96,17 @@ def vertex_to_entity_path(vertex_path,
         elif a[1] == b[1]:
             return 1, -1
         else:
-            msg = 'edges not connected!'
-            msg += '\nvertex_path: {}'.format(vertex_path)
-            msg += '\nentity_path: {}'.format(entity_path)
-            msg += '\nentity[a]: {}'.format(entities[ea].points)
-            msg += '\nentity[b]: {}'.format(entities[eb].points)
-            constants.log.warning(msg)
+            constants.log.debug(
+                'edges not connected!\n'
+                'vertex path %s\n'
+                'entity path: %s\n'
+                'entity[a]: %s\n'
+                'entity[b]: %s',
+                vertex_path,
+                entity_path,
+                entities[ea].points,
+                entities[eb].points)
+
             return None, None
 
     if vertices is None or vertices.shape[1] != 2:
@@ -294,18 +299,15 @@ class PathSample:
         if offset < constants.tol_path.merge:
             truncated = self._points[:position + 1]
         else:
-            vector = util.unitize(np.diff(self._points[np.arange(2) + position],
-                                          axis=0).reshape(-1))
+            vector = util.unitize(np.diff(
+                self._points[np.arange(2) + position],
+                axis=0).reshape(-1))
             vector *= offset
             endpoint = self._points[position] + vector
             truncated = np.vstack((self._points[:position + 1],
                                    endpoint))
-
-        assert (
-            util.row_norm(
-                np.diff(
-                    truncated,
-                    axis=0)).sum() -
+        assert (util.row_norm(np.diff(
+            truncated, axis=0)).sum() -
             distance) < constants.tol_path.merge
 
         return truncated
@@ -342,7 +344,7 @@ def resample_path(points,
         Points on the path
     """
 
-    points = np.array(points, dtype=np.float)
+    points = np.array(points, dtype=np.float64)
     # generate samples along the perimeter from kwarg count or step
     if (count is not None) and (step is not None):
         raise ValueError('Only step OR count can be specified')

@@ -12,7 +12,7 @@ class GroupTests(g.unittest.TestCase):
 
         # check unique_rows on float data
         data = g.np.arange(count * 3).reshape((-1, 3)).astype(
-            g.np.float)
+            g.np.float64)
         data[:subset] = data[0]
         unique, inverse = g.trimesh.grouping.unique_rows(data)
         assert (inverse[:subset] == 0).all()
@@ -33,7 +33,7 @@ class GroupTests(g.unittest.TestCase):
 
         count = 100
         subset = int(count / 10)
-        a = g.np.zeros(count, dtype=g.np.int)
+        a = g.np.zeros(count, dtype=g.np.int64)
 
         result = blocks(a, min_len=0, only_nonzero=False)
         assert len(result) == 1
@@ -182,7 +182,7 @@ class GroupTests(g.unittest.TestCase):
         a = g.np.array([-1, -1, -1, 0, 0, 1, 1, 2,
                         0, 3, 3, 4, 4, 5, 5, 6,
                         6, 7, 7, 8, 8, 9, 9, 9],
-                       dtype=g.np.int)
+                       dtype=g.np.int64)
         r = g.trimesh.grouping.merge_runs(a)
         u = g.trimesh.grouping.unique_ordered(a)
 
@@ -256,8 +256,8 @@ class GroupTests(g.unittest.TestCase):
         assert g.np.allclose(uv, vec)
         assert len(ui) == len(vec)
 
-        uv, ui = g.trimesh.grouping.group_vectors(vec,
-                                                  include_negative=True)
+        uv, ui = g.trimesh.grouping.group_vectors(
+            vec, include_negative=True)
         # since we included negative vectors, there should
         # be half the number of unique vectors and 2 indexes per vector
         assert g.np.shape(ui) == (100, 2)
@@ -279,6 +279,14 @@ class GroupTests(g.unittest.TestCase):
             a, b, g.np.setdiff1d)
         assert g.np.allclose(g.np.unique(diff),
                              g.np.arange(8))
+
+    def test_broken(self):
+        # create a broken mesh referencing
+        # vertices that don't exist
+        mesh = g.trimesh.Trimesh(vertices=[], faces=[[0, 1, 2]])
+        # shouldn't error because there are no vertices
+        # even though faces are wrong
+        mesh.merge_vertices()
 
 
 def check_roll_wrap(**kwargs):

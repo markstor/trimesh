@@ -57,6 +57,7 @@ requirements_all = requirements_easy.union([
     'glooey',        # make GUI applications with 3D stuff
     'meshio',        # load a number of additional mesh formats; Python 3.5+
     'scikit-image',  # marching cubes and other nice stuff
+    'xatlas',        # texture unwrapping
 ])
 # requirements for running unit tests
 requirements_test = set(['pytest',       # run all unit tests
@@ -66,14 +67,19 @@ requirements_test = set(['pytest',       # run all unit tests
 
 # Python 2.7 and 3.4 support has been dropped from packages
 # version lock those packages here so install succeeds
-if (sys.version_info.major, sys.version_info.minor) <= (3, 4):
-    # packages that no longer support old Python
-    lock = [('lxml', '4.3.5'),
-            ('shapely', '1.6.4'),
-            ('pyglet', '1.4.10')]
-    for name, version in lock:
+current = (sys.version_info.major, sys.version_info.minor)
+# packages that no longer support old Python
+# setuptools-scm is required by sympy-mpmath chain
+# and will hopefully be removed in future versions
+lock = [((3, 4), 'lxml', '4.3.5'),
+        ((3, 4), 'shapely', '1.6.4'),
+        ((3, 4), 'pyglet', '1.4.10'),
+        ((3, 5), 'sympy', None)]
+for max_python, name, version in lock:
+    if current <= max_python:
         # remove version-free requirements
-        requirements_easy.remove(name)
+        requirements_easy.discard(name)
+        # if version is None drop that package
         if version is not None:
             # add working version locked requirements
             requirements_easy.add('{}=={}'.format(name, version))
@@ -124,7 +130,7 @@ setup(name='trimesh',
           'trimesh.exchange',
           'trimesh.resources',
           'trimesh.interfaces'],
-      package_data={'trimesh': ['resources/*template*',
+      package_data={'trimesh': ['resources/templates/*',
                                 'resources/*.json',
                                 'resources/*.zip']},
       install_requires=list(requirements_default),

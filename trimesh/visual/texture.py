@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 
 from .base import Visuals
@@ -14,7 +16,8 @@ class TextureVisuals(Visuals):
     def __init__(self,
                  uv=None,
                  material=None,
-                 image=None):
+                 image=None,
+                 face_materials=None):
         """
         Store a single material and per-vertex UV coordinates
         for a mesh.
@@ -49,6 +52,8 @@ class TextureVisuals(Visuals):
         else:
             # if passed assign
             self.material = material
+
+        self.face_materials = face_materials
 
     def _verify_crc(self):
         """
@@ -134,7 +139,8 @@ class TextureVisuals(Visuals):
             uv = uv.copy()
         copied = TextureVisuals(
             uv=uv,
-            material=self.material.copy())
+            material=self.material.copy(),
+            face_materials=copy.copy(self.face_materials))
 
         return copied
 

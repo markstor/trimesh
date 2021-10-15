@@ -72,7 +72,6 @@ class ColorVisuals(Visuals):
         try:
             if face_colors is not None:
                 self.face_colors = face_colors
-
             if vertex_colors is not None:
                 self.vertex_colors = vertex_colors
         except ValueError:
@@ -118,15 +117,20 @@ class ColorVisuals(Visuals):
         mode : str or None
           One of ('face', 'vertex', None)
         """
-        self._verify_crc()
-        if 'vertex_colors' in self._data:
-            mode = 'vertex'
-        elif 'face_colors' in self._data:
-            mode = 'face'
-        else:
-            mode = None
+        # if nothing is stored anywhere it's a safe bet mode is None
+        if not (len(self._cache.cache) > 0 or len(self._data.data) > 0):
+            return None
 
-        return mode
+        # do bookkeeping
+        self._verify_crc()
+
+        # check modes in data
+        if 'vertex_colors' in self._data:
+            return 'vertex'
+        elif 'face_colors' in self._data:
+            return 'face'
+
+        return None
 
     def crc(self):
         """
@@ -315,6 +319,8 @@ class ColorVisuals(Visuals):
                 else:
                     raise ValueError('unsupported name!!!')
                 self._cache.verify()
+                # return the stored copy of the colors
+                return self._data[key_colors]
         else:
             # colors have never been accessed
             if self.kind is None:
@@ -742,7 +748,7 @@ def colors_to_materials(colors, count=None):
     # if we were only passed a single color
     if util.is_shape(rgba, (4,)) and count is not None:
         diffuse = rgba.reshape((-1, 4))
-        index = np.zeros(count, dtype=np.int)
+        index = np.zeros(count, dtype=np.int64)
     elif util.is_shape(rgba, (-1, 4)):
         # we were passed multiple colors
         # find the unique colors in the list to save as materials

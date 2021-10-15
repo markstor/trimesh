@@ -4,30 +4,39 @@ material.py
 
 Store visual materials as objects.
 """
+import abc
 import copy
 import numpy as np
 
 from . import color
 from .. import util
 from .. import grouping
+from .. import exceptions
 
 
-class Material(object):
+class Material(util.ABC):
     def __init__(self, *args, **kwargs):
         raise NotImplementedError('material must be subclassed!')
 
     def __hash__(self):
         return id(self)
 
-    @property
+    @abc.abstractproperty
     def main_color(self):
-        raise NotImplementedError('material must be subclassed!')
+        """
+        The "average" color of this material.
+
+        Returns
+        ---------
+        color : (4,) uint8
+          Average color of this material.
+        """
 
     @property
     def name(self):
         if hasattr(self, '_name'):
             return self._name
-        return 'material0'
+        return 'material_0'
 
     @name.setter
     def name(self, value):
@@ -191,6 +200,93 @@ class SimpleMaterial(Material):
                            baseColorFactor=self.diffuse)
 
 
+class MultiMaterial(Material):
+    def __init__(self, materials=None, **kwargs):
+        """
+        Wrapper for a list of Materials.
+
+        Parameters
+        ----------
+        materials : Optional[List[Material]]
+            List of materials with which the container to be initialized.
+        """
+        if materials is None:
+            self.materials = []
+        else:
+            self.materials = materials
+
+    def to_pbr(self):
+        """
+        TODO : IMPLEMENT
+        """
+        pbr = [m for m in self.materials
+               if isinstance(m, PBRMaterial)]
+        if len(pbr) == 0:
+            return PBRMaterial()
+        return pbr[0]
+
+    def __hash__(self):
+        """
+        Provide a hash of the multi material so we can detect
+        duplicates.
+
+        Returns
+        ------------
+        hash : int
+          Xor hash of the contained materials.
+        """
+        hashed = int(np.bitwise_xor.reduce(
+            [hash(m) for m in self.materials]))
+
+        return hashed
+
+    def __iter__(self):
+        return iter(self.materials)
+
+    def __next__(self):
+        return next(self.materials)
+
+    def __len__(self):
+        return len(self.materials)
+
+    @property
+    def main_color(self):
+        """
+        The "average" color of this material.
+
+        Returns
+        ---------
+        color : (4,) uint8
+          Average color of this material.
+        """
+
+    def add(self, material):
+        """
+        Adds new material to the container.
+
+        Parameters
+        ----------
+        material : Material
+            The material to be added.
+        """
+        self.materials.append(material)
+
+    def get(self, idx):
+        """
+        Get material by index.
+
+        Parameters
+        ----------
+        idx : int
+            Index of the material to be retrieved.
+
+        Returns
+        -------
+            The material on the given index.
+        """
+        return self.materials[idx]
+
+
 class PBRMaterial(Material):
     """
     Create a material for physically based rendering as
@@ -212,8 +308,8 @@ class PBRMaterial(Material):
                  roughnessFactor=None,
                  metallicRoughnessTexture=None,
                  doubleSided=False,
-                 alphaMode='OPAQUE',
-                 alphaCutoff=0.5):
+                 alphaMode=None,
+                 alphaCutoff=None):
 
         # (4,) float
         if baseColorFactor is not None:
@@ -321,7 +417,7 @@ class PBRMaterial(Material):
         if hasattr(self.baseColorFactor, 'tobytes'):
             hashed ^= hash(self.baseColorFactor.tobytes())
 
-        return hashed
+        return int(hashed)
 
 
 def empty_material(color=None):
@@ -338,7 +434,11 @@ def empty_material(color=None):
     material : SimpleMaterial
       Image is a a one pixel RGB
     """
-    from PIL import Image
+    try:
+        from PIL import Image
+    except BaseException as E:
+        return exceptions.ExceptionModule(E)
+
     if color is None or np.shape(color) not in ((3,), (4,)):
         color = np.array([255, 255, 255], dtype=np.uint8)
     else:
@@ -401,7 +501,8 @@ def pack(materials, uvs, deduplicate=True):
     if deduplicate:
         # start by collecting a list of indexes for each material hash
         unique_idx = collections.defaultdict(list)
-        [unique_idx[hash(m)].append(i) for i, m in enumerate(materials)]
+        [unique_idx[hash(m)].append(i)
+         for i, m in enumerate(materials)]
         # now we only need the indexes and don't care about the hashes
         mat_idx = list(unique_idx.values())
     else:
@@ -440,11 +541,17 @@ def pack(materials, uvs, deduplicate=True):
         # how big was the original image
         scale = img.size / final_size
         # what is the offset in fractions of final image
-        uv_off = off / final_size
+        xy_off = off / final_size
         # scale and translate each of the new UV coordinates
         # [new_uv.append((uvs[i] * scale) + uv_off) for i in idxs]
         # TODO : figure out why this is broken sometimes...
-        [new_uv.append((uvs[i] * scale) + uv_off) for i in idxs]
+
+        def transform_uvs(uv, scale, xy_off):
+            xy = np.stack([uv[:, 0], 1 - uv[:, 1]], axis=-1)
+            xy = (xy * scale) + xy_off
+            return np.stack([xy[:, 0], 1 - xy[:, 1]], axis=-1)
+
+        [new_uv.append(transform_uvs(uvs[i], scale, xy_off)) for i in idxs]
 
     # stack UV coordinates into single (n, 2) array
     stacked = np.vstack(new_uv)

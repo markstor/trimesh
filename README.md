@@ -1,8 +1,7 @@
 [![trimesh](https://trimsh.org/images/logotype-a.svg)](http://trimsh.org)
 
 -----------
-[![Github Actions](https://github.com/mikedh/trimesh/workflows/Release%20Trimesh/badge.svg)](https://github.com/mikedh/trimesh/actions)  [![PyPI version](https://badge.fury.io/py/trimesh.svg)](https://badge.fury.io/py/trimesh) [![Join the chat at https://gitter.im/trimsh/Lobby](https://badges.gitter.im/trimsh/Lobby.svg)](https://gitter.im/trimsh/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-
+[![Github Actions](https://github.com/mikedh/trimesh/workflows/Release%20Trimesh/badge.svg)](https://github.com/mikedh/trimesh/actions)  [![PyPI version](https://badge.fury.io/py/trimesh.svg)](https://badge.fury.io/py/trimesh) [![codecov](https://codecov.io/gh/mikedh/trimesh/branch/master/graph/badge.svg?token=4PVRQXyl2h)](https://codecov.io/gh/mikedh/trimesh)
 
 
 Trimesh is a pure Python (2.7-3.4+) library for loading and using [triangular meshes](https://en.wikipedia.org/wiki/Triangle_mesh) with an emphasis on watertight surfaces. The goal of the library is to provide a full featured and well tested Trimesh object which allows for easy manipulation and analysis, in the style of the Polygon object in the [Shapely library](https://github.com/Toblerity/Shapely).
@@ -20,14 +19,7 @@ Keeping `trimesh` easy to install is a core goal, thus the *only* hard dependenc
 pip install trimesh
 ```
 
-For more functionality, like convex hulls (`scipy`), graph operations (`networkx`), faster ray queries (`pyembree`), vector path handling (`shapely` and `rtree`), preview windows (`pyglet`), faster cache checks (`xxhash`) and more, the easiest way to get a full `trimesh` install is a [conda environment](https://conda.io/miniconda.html):
-
-```bash
-# this will install all soft dependencies available on your current platform
-conda install -c conda-forge trimesh
-```
-
-To install `trimesh` with the soft dependencies which install cleanly on Linux, OSX, and Windows* using `pip`:
+More functionality is available when soft dependencies are installed. This includes things like convex hulls (`scipy`), graph operations (`networkx`), faster ray queries (`pyembree`), vector path handling (`shapely` and `rtree`), preview windows (`pyglet`), faster cache checks (`xxhash`), etc. To install `trimesh` with the soft dependencies that generally install cleanly on Linux, OSX, and Windows using `pip`:
 ```bash
 pip install trimesh[easy]
 ```

@@ -9,8 +9,6 @@ Other libraries may be imported must be wrapped in try/except blocks
 or imported inside of a function
 """
 
-import numpy as np
-
 import abc
 import sys
 import copy
@@ -22,6 +20,8 @@ import hashlib
 import zipfile
 import tempfile
 import collections
+
+import numpy as np
 
 if sys.version_info >= (3, 4):
     # for newer version of python
@@ -750,7 +750,7 @@ def grid_linspace(bounds, count):
     if len(bounds) != 2:
         raise ValueError('bounds must be (2, dimension!')
 
-    count = np.asanyarray(count, dtype=np.int)
+    count = np.asanyarray(count, dtype=np.int64)
     if count.shape == ():
         count = np.tile(count, bounds.shape[1])
 
@@ -889,29 +889,6 @@ def hash_file(file_obj,
     return hashed
 
 
-def md5_object(obj):
-    """
-    If an object is hashable, return the string of the MD5.
-
-    Parameters
-    ------------
-    obj: object
-
-    Returns
-    ----------
-    md5: str, MD5 hash
-    """
-    hasher = hashlib.md5()
-    if isinstance(obj, basestring) and PY3:
-        # in python3 convert strings to bytes before hashing
-        hasher.update(obj.encode('utf-8'))
-    else:
-        hasher.update(obj)
-
-    md5 = hasher.hexdigest()
-    return md5
-
-
 def attach_to_log(level=logging.DEBUG,
                   handler=None,
                   loggers=None,
@@ -940,10 +917,9 @@ def attach_to_log(level=logging.DEBUG,
         blacklist = ['TerminalIPythonApp',
                      'PYREADLINE',
                      'pyembree',
-                     'shapely.geos',
-                     'shapely.speedups._speedups',
-                     'parso.cache',
-                     'parso.python.diff']
+                     'shapely',
+                     'matplotlib',
+                     'parso']
 
     # make sure we log warnings from the warnings module
     logging.captureWarnings(capture_warnings)
@@ -990,7 +966,7 @@ def attach_to_log(level=logging.DEBUG,
     for logger in loggers:
         # skip loggers on the blacklist
         if (logger.__class__.__name__ != 'Logger' or
-                logger.name in blacklist):
+                any(logger.name.startswith(b) for b in blacklist)):
             continue
         logger.addHandler(handler)
         logger.setLevel(level)
@@ -1881,8 +1857,9 @@ def sigfig_round(values, sigfig=1):
 
 def sigfig_int(values, sigfig):
     """
-    Convert a set of floating point values into integers with a specified number
-    of significant figures and an exponent.
+    Convert a set of floating point values into integers
+    with a specified number of significant figures and an
+    exponent.
 
     Parameters
     ------------
@@ -1900,7 +1877,7 @@ def sigfig_int(values, sigfig):
       the same order of magnitude as the input
     """
     values = np.asanyarray(values).reshape(-1)
-    sigfig = np.asanyarray(sigfig, dtype=np.int).reshape(-1)
+    sigfig = np.asanyarray(sigfig, dtype=np.int64).reshape(-1)
 
     if sigfig.shape != values.shape:
         raise ValueError('sigfig must match identifier')
@@ -1910,8 +1887,7 @@ def sigfig_int(values, sigfig):
     exponent[nonzero] = np.floor(np.log10(np.abs(values[nonzero])))
 
     multiplier = exponent - sigfig + 1
-
-    as_int = np.round(values / (10**multiplier)).astype(np.int32)
+    as_int = (values / (10**multiplier)).round().astype(np.int64)
 
     return as_int, multiplier
 
@@ -2055,7 +2031,7 @@ def triangle_strips_to_faces(strips):
     blob = np.concatenate(strips)
 
     # preallocate and slice the blob into rough triangles
-    tri = np.zeros((len(blob) - 2, 3), dtype=np.int)
+    tri = np.zeros((len(blob) - 2, 3), dtype=np.int64)
     for i in range(3):
         tri[:len(blob) - 3, i] = blob[i:-3 + i]
     # the last triangle is left off from the slicing, add it back
@@ -2064,14 +2040,14 @@ def triangle_strips_to_faces(strips):
     # remove the triangles which were implicit but not actually there
     # because we combined everything into one big array for speed
     length_index = np.cumsum(lengths)[:-1]
-    keep = np.ones(len(tri), dtype=np.bool)
+    keep = np.ones(len(tri), dtype=bool)
     keep[length_index - 2] = False
     keep[length_index - 1] = False
     tri = tri[keep]
 
     # flip every other triangle so they generate correct normals/winding
     length_index = np.append(0, np.cumsum(lengths - 2))
-    flip = np.zeros(length_index[-1], dtype=np.bool)
+    flip = np.zeros(length_index[-1], dtype=bool)
     for i in range(len(length_index) - 1):
         flip[length_index[i] + 1:length_index[i + 1]][::2] = True
     tri[flip] = np.fliplr(tri[flip])

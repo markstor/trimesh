@@ -12,7 +12,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v2
       with:
         python-version: 3.8
     - name: Install Formatting
@@ -46,7 +46,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v2
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install APT On Linux
@@ -65,6 +65,9 @@ jobs:
         pip install pytest pytest-cov wheel coveralls setuptools
     - name: Install Trimesh
       run: pip install .[easy]
+    - name: Install Linux Deps
+      if: matrix.os == 'ubuntu-latest'
+      run: sudo bash docker/builds/gltf_validator.bash
     - name: Run Pytest
       run: pytest --cov=trimesh tests/
     - name: Coverage Report
@@ -79,7 +82,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Set up Python
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v2
       with:
         python-version: '3.x'
     - name: Install publishing dependencies

@@ -191,7 +191,7 @@ def split(segments, points, atol=1e-5):
                segments[:, 1, :]) ** 2).sum(axis=1) ** 0.5
 
     # a mask to remove segments we split at the end
-    keep = np.ones(len(segments), dtype=np.bool)
+    keep = np.ones(len(segments), dtype=bool)
     # append new segments to a list
     new_seg = []
 
@@ -249,7 +249,7 @@ def unique(segments, digits=5):
     # make sure rows are sorted
     inverse.sort(axis=1)
     # remove segments where both indexes are the same
-    mask = np.zeros(len(segments), dtype=np.bool)
+    mask = np.zeros(len(segments), dtype=bool)
     # only include the first occurrence of a segment
     mask[grouping.unique_rows(inverse)[0]] = True
     # remove segments that are zero-length
@@ -548,5 +548,5 @@ def to_svg(segments, digits=4, matrix=None, merge=True):
     base = ' M _ _ L _ _'.replace(
         '_', '{:0.' + str(int(digits)) + 'f}')
     # create one large format string then apply points
-    result = (base * len(segments))[1:].format(*segments.ravel())
+    result = (base * len(segments)).format(*segments.ravel())
     return result
