@@ -2,13 +2,15 @@ import numpy as np
 
 from . import util
 from .constants import log
+from .typed import NDArray
 
 try:
     import scipy.sparse
 except BaseException as E:
     from . import exceptions
+
     # raise E again if anyone tries to use sparse
-    scipy = exceptions.ExceptionModule(E)
+    scipy = exceptions.ExceptionWrapper(E)
 
 
 def plane_transform(origin, normal):
@@ -30,8 +32,7 @@ def plane_transform(origin, normal):
     """
     transform = align_vectors(normal, [0, 0, 1])
     if origin is not None:
-        transform[:3, 3] = -np.dot(
-            transform, np.append(origin, 1))[:3]
+        transform[:3, 3] = -np.dot(transform, np.append(origin, 1))[:3]
     return transform
 
 
@@ -60,7 +61,7 @@ def align_vectors(a, b, return_angle=False):
     a = np.array(a, dtype=np.float64)
     b = np.array(b, dtype=np.float64)
     if a.shape != (3,) or b.shape != (3,):
-        raise ValueError('vectors must be (3,)!')
+        raise ValueError("vectors must be (3,)!")
 
     # find the SVD of the two vectors
     au = np.linalg.svd(a.reshape((-1, 1)))[0]
@@ -102,15 +103,14 @@ def faces_to_edges(faces, return_index=False):
     edges : (n*3, 2) int
       Vertex indices representing edges
     """
-    faces = np.asanyarray(faces)
+    faces = np.asanyarray(faces, np.int64)
 
     # each face has three edges
     edges = faces[:, [0, 1, 1, 2, 2, 0]].reshape((-1, 2))
 
     if return_index:
         # edges are in order of faces due to reshape
-        face_index = np.tile(np.arange(len(faces)),
-                             (3, 1)).T.reshape(-1)
+        face_index = np.tile(np.arange(len(faces)), (3, 1)).T.reshape(-1)
         return edges, face_index
     return edges
 
@@ -135,7 +135,7 @@ def vector_angle(pairs):
     elif util.is_shape(pairs, (2, 3)):
         pairs = pairs.reshape((-1, 2, 3))
     elif not util.is_shape(pairs, (-1, 2, (2, 3))):
-        raise ValueError('pairs must be (n,2,(2|3))!')
+        raise ValueError("pairs must be (n,2,(2|3))!")
 
     # do the dot product between vectors
     dots = util.diagonal_dot(pairs[:, 0], pairs[:, 1])
@@ -147,7 +147,7 @@ def vector_angle(pairs):
     return angles
 
 
-def triangulate_quads(quads, dtype=np.int64):
+def triangulate_quads(quads, dtype=np.int64) -> NDArray:
     """
     Given an array of quad faces return them as triangle faces,
     also handles pure triangles and mixed triangles and quads.
@@ -162,31 +162,50 @@ def triangulate_quads(quads, dtype=np.int64):
     faces : (m, 3) int
       Vertex indices of triangular faces.c
     """
-    quads = np.asanyarray(quads)
+
     if len(quads) == 0:
-        return quads.astype(dtype)
-    elif len(quads.shape) == 2 and quads.shape[1] == 3:
-        # if they are just triangles return immediately
-        return quads.astype(dtype)
-    elif len(quads.shape) == 2 and quads.shape[1] == 4:
-        # if they are just quads stack and return
-        return np.vstack((quads[:, [0, 1, 2]],
-                          quads[:, [2, 3, 0]])).astype(dtype)
-    else:
-        # mixed tris, and quads, and other so filter and handle
-        tri = np.array([i for i in quads if len(i) == 3])
-        quad = np.array([i for i in quads if len(i) == 4])
-        if len(quad) == 0:
-            return tri.astype(dtype)
-        # combine triangulated quads with triangles
-        return util.vstack_empty([
-            tri, np.vstack((quad[:, [0, 1, 2]],
-                            quad[:, [2, 3, 0]]))]).astype(dtype)
+        return np.zeros(0, dtype=dtype)
+
+    try:
+        # this will fail in newer versions of numpy
+        # if there are mixed quads and tris
+        quads = np.array(quads, dtype=dtype)
+
+        if len(quads.shape) == 2 and quads.shape[1] == 3:
+            # if they are just triangles return immediately
+            return quads.astype(dtype)
+
+        if len(quads.shape) == 2 and quads.shape[1] == 4:
+            # if they are just quads stack and return
+            return np.vstack((quads[:, [0, 1, 2]], quads[:, [2, 3, 0]])).astype(dtype)
+    except ValueError:
+        # new numpy raises an error for sequences
+        pass
+
+    # we made it here so we have mixed tris/quads/polygons
+    # filter into the three cases
+    tri = np.array([i for i in quads if len(i) == 3])
+    quad = np.array([i for i in quads if len(i) == 4])
+    # triangulate arbitrary polygons as triangle fans
+    # this isn't guaranteed to be sane if the polygons
+    # aren't convex but that would require a real maniac
+    poly = [
+        [[f[0], f[i + 1], f[i + 2]] for i in range(len(f) - 2)]
+        for f in quads
+        if len(f) > 4
+    ]
+
+    if len(quad) == 0 and len(poly) == 0:
+        return tri.astype(dtype)
+    if len(poly) > 0:
+        poly = np.vstack(poly)
+    if len(quad) > 0:
+        quad = np.vstack((quad[:, [0, 1, 2]], quad[:, [2, 3, 0]]))
+    # combine triangulated quads with triangles
+    return util.vstack_empty([tri, quad, poly]).astype(dtype)
 
 
-def vertex_face_indices(vertex_count,
-                        faces,
-                        faces_sparse):
+def vertex_face_indices(vertex_count, faces, faces_sparse):
     """
     Find vertex face indices from the faces array of vertices
 
@@ -209,11 +228,10 @@ def vertex_face_indices(vertex_count,
     # Create 2D array with row for each vertex and
     # length of max number of faces for a vertex
     try:
-        counts = np.bincount(
-            faces.flatten(), minlength=vertex_count)
+        counts = np.bincount(faces.flatten(), minlength=vertex_count)
     except TypeError:
         # casting failed on 32 bit Windows
-        log.warning('casting failed, falling back!')
+        log.warning("casting failed, falling back!")
         # fall back to np.unique (usually ~35x slower than bincount)
         counts = np.unique(faces.flatten(), return_counts=True)[1]
     assert len(counts) == vertex_count
@@ -237,23 +255,21 @@ def vertex_face_indices(vertex_count,
         padded[padded == 0] = sorted_faces
     except BaseException:
         # fall back to a slow loop
-        log.warning('vertex_faces falling back to slow loop! ' +
-                    'mesh probably has degenerate faces',
-                    exc_info=True)
+        log.warning(
+            "vertex_faces falling back to slow loop! "
+            + "mesh probably has degenerate faces",
+            exc_info=True,
+        )
         sort = np.zeros(faces.size, dtype=np.int64)
         flat = faces.flatten()
         for v in range(vertex_count):
             # assign the data in order
-            sort[starts[v]:starts[v] + counts[v]] = (np.where(flat == v)[0] // 3)[::-1]
+            sort[starts[v] : starts[v] + counts[v]] = (np.where(flat == v)[0] // 3)[::-1]
         padded[padded == 0] = sort
     return padded
 
 
-def mean_vertex_normals(vertex_count,
-                        faces,
-                        face_normals,
-                        sparse=None,
-                        **kwargs):
+def mean_vertex_normals(vertex_count, faces, face_normals, sparse=None, **kwargs):
     """
     Find vertex normals from the mean of the faces that contain
     that vertex.
@@ -273,6 +289,7 @@ def mean_vertex_normals(vertex_count,
       Normals for every vertex
       Vertices unreferenced by faces will be zero.
     """
+
     def summed_sparse():
         # use a sparse matrix of which face contains each vertex to
         # figure out the summed normal at each vertex
@@ -295,9 +312,7 @@ def mean_vertex_normals(vertex_count,
     try:
         summed = summed_sparse()
     except BaseException:
-        log.warning(
-            'unable to use sparse matrix, falling back!',
-            exc_info=True)
+        log.warning("unable to use sparse matrix, falling back!", exc_info=True)
         summed = summed_loop()
 
     # invalid normals will be returned as zero
@@ -306,14 +321,12 @@ def mean_vertex_normals(vertex_count,
     return vertex_normals
 
 
-def weighted_vertex_normals(vertex_count,
-                            faces,
-                            face_normals,
-                            face_angles,
-                            use_loop=False):
+def weighted_vertex_normals(
+    vertex_count, faces, face_normals, face_angles, use_loop=False
+):
     """
     Compute vertex normals from the faces that contain that vertex.
-    The contibution of a face's normal to a vertex normal is the
+    The contribution of a face's normal to a vertex normal is the
     ratio of the corner-angle in which the vertex is, with respect
     to the sum of all corner-angles surrounding the vertex.
 
@@ -338,18 +351,13 @@ def weighted_vertex_normals(vertex_count,
       Normals for every vertex
       Vertices unreferenced by faces will be zero.
     """
+
     def summed_sparse():
         # use a sparse matrix of which face contains each vertex to
         # figure out the summed normal at each vertex
         # allow cached sparse matrix to be passed
         # fill the matrix with vertex-corner angles as weights
-        corner_angles = face_angles[np.repeat(np.arange(len(faces)), 3),
-                                    np.argsort(faces, axis=1).ravel()]
-        # create a sparse matrix
-        matrix = index_sparse(vertex_count, faces).astype(np.float64)
-        # assign the corner angles to the sparse matrix data
-        matrix.data = corner_angles
-
+        matrix = index_sparse(vertex_count, faces, data=face_angles.ravel())
         return matrix.dot(face_normals)
 
     def summed_loop():
@@ -361,14 +369,13 @@ def weighted_vertex_normals(vertex_count,
             face_idxs, inface_idxs = np.where(faces == vertex_idx)
             surrounding_angles = face_angles[face_idxs, inface_idxs]
             summed[vertex_idx] = np.dot(
-                surrounding_angles /
-                surrounding_angles.sum(),
-                face_normals[face_idxs])
+                surrounding_angles / surrounding_angles.sum(), face_normals[face_idxs]
+            )
 
         return summed
 
     # normals should be unit vectors
-    face_ok = (face_normals ** 2).sum(axis=1) > 0.5
+    face_ok = (face_normals**2).sum(axis=1) > 0.5
     # don't consider faces with invalid normals
     faces = faces[face_ok]
     face_normals = face_normals[face_ok]
@@ -378,14 +385,12 @@ def weighted_vertex_normals(vertex_count,
         try:
             return util.unitize(summed_sparse())
         except BaseException:
-            log.warning(
-                'unable to use sparse matrix, falling back!',
-                exc_info=True)
+            log.warning("unable to use sparse matrix, falling back!", exc_info=True)
     # we either crashed or were asked to loop
     return util.unitize(summed_loop())
 
 
-def index_sparse(columns, indices, data=None):
+def index_sparse(columns, indices, data=None, dtype=None):
     """
     Return a sparse matrix for which vertices are contained in which faces.
     A data vector can be passed which is then used instead of booleans
@@ -438,17 +443,20 @@ def index_sparse(columns, indices, data=None):
     indices = np.asanyarray(indices)
     columns = int(columns)
 
+    # flattened list
     row = indices.reshape(-1)
-    col = np.tile(np.arange(len(indices)).reshape(
-        (-1, 1)), (1, indices.shape[1])).reshape(-1)
+    col = np.tile(
+        np.arange(len(indices)).reshape((-1, 1)), (1, indices.shape[1])
+    ).reshape(-1)
 
     shape = (columns, len(indices))
     if data is None:
         data = np.ones(len(col), dtype=bool)
+    elif len(data) != len(col):
+        raise ValueError("data incorrect length")
+
+    if dtype is not None:
+        data = data.astype(dtype)
 
     # assemble into sparse matrix
-    matrix = scipy.sparse.coo_matrix((data, (row, col)),
-                                     shape=shape,
-                                     dtype=data.dtype)
-
-    return matrix
+    return scipy.sparse.coo_matrix((data, (row, col)), shape=shape, dtype=data.dtype)

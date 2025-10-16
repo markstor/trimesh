@@ -1,6 +1,6 @@
-import numpy as np
-
 import collections
+
+import numpy as np
 
 try:
     # pip install python-fcl
@@ -9,7 +9,7 @@ except BaseException:
     fcl = None
 
 
-class ContactData(object):
+class ContactData:
     """
     Data structure for holding information about a collision contact.
     """
@@ -26,12 +26,22 @@ class ContactData(object):
           The contact in question.
         """
         self.names = set(names)
-        self._inds = {
-            names[0]: contact.b1,
-            names[1]: contact.b2
-        }
+        self._inds = {names[0]: contact.b1, names[1]: contact.b2}
+        self._normal = contact.normal
         self._point = contact.pos
         self._depth = contact.penetration_depth
+
+    @property
+    def normal(self):
+        """
+        The 3D intersection normal for this contact.
+
+        Returns
+        -------
+        normal : (3,) float
+          The intersection normal.
+        """
+        return self._normal
 
     @property
     def point(self):
@@ -75,7 +85,7 @@ class ContactData(object):
         return self._inds[name]
 
 
-class DistanceData(object):
+class DistanceData:
     """
     Data structure for holding information about a distance query.
     """
@@ -92,13 +102,10 @@ class DistanceData(object):
           The distance query result.
         """
         self.names = set(names)
-        self._inds = {
-            names[0]: result.b1,
-            names[1]: result.b2
-        }
+        self._inds = {names[0]: result.b1, names[1]: result.b2}
         self._points = {
             names[0]: result.nearest_points[0],
-            names[1]: result.nearest_points[1]
+            names[1]: result.nearest_points[1],
         }
         self._distance = result.min_distance
 
@@ -148,7 +155,7 @@ class DistanceData(object):
         return self._points[name]
 
 
-class CollisionManager(object):
+class CollisionManager:
     """
     A mesh-mesh collision manager.
     """
@@ -158,23 +165,17 @@ class CollisionManager(object):
         Initialize a mesh-mesh collision manager.
         """
         if fcl is None:
-            raise ValueError('No FCL Available! Please install the python-fcl library')
+            raise ValueError("No FCL Available! Please install the python-fcl library")
         # {name: {geom:, obj}}
         self._objs = {}
         # {id(bvh) : str, name}
         # unpopulated values will return None
         self._names = collections.defaultdict(lambda: None)
 
-        # cache BVH objects
-        # {mesh.md5(): fcl.BVHModel object}
-        self._bvh = {}
         self._manager = fcl.DynamicAABBTreeCollisionManager()
         self._manager.setup()
 
-    def add_object(self,
-                   name,
-                   mesh,
-                   transform=None):
+    def add_object(self, name, mesh, transform=None):
         """
         Add an object to the collision manager.
 
@@ -196,21 +197,21 @@ class CollisionManager(object):
             transform = np.eye(4)
         transform = np.asanyarray(transform, dtype=np.float32)
         if transform.shape != (4, 4):
-            raise ValueError('transform must be (4,4)!')
+            raise ValueError("transform must be (4,4)!")
 
-        # create or recall from cache BVH
-        bvh = self._get_BVH(mesh)
+        # create BVH/Convex
+        geom = self._get_fcl_obj(mesh)
+
         # create the FCL transform from (4,4) matrix
         t = fcl.Transform(transform[:3, :3], transform[:3, 3])
-        o = fcl.CollisionObject(bvh, t)
+        o = fcl.CollisionObject(geom, t)
 
         # Add collision object to set
         if name in self._objs:
             self._manager.unregisterObject(self._objs[name])
-        self._objs[name] = {'obj': o,
-                            'geom': bvh}
+        self._objs[name] = {"obj": o, "geom": geom}
         # store the name of the geometry
-        self._names[id(bvh)] = name
+        self._names[id(geom)] = name
 
         self._manager.registerObject(o)
         self._manager.update()
@@ -226,14 +227,14 @@ class CollisionManager(object):
           The identifier for the object
         """
         if name in self._objs:
-            self._manager.unregisterObject(self._objs[name]['obj'])
-            self._manager.update(self._objs[name]['obj'])
+            self._manager.unregisterObject(self._objs[name]["obj"])
+            self._manager.update(self._objs[name]["obj"])
             # remove objects from _objs
-            geom_id = id(self._objs.pop(name)['geom'])
+            geom_id = id(self._objs.pop(name)["geom"])
             # remove names
             self._names.pop(geom_id)
         else:
-            raise ValueError('{} not in collision manager!'.format(name))
+            raise ValueError(f"{name} not in collision manager!")
 
     def set_transform(self, name, transform):
         """
@@ -248,18 +249,16 @@ class CollisionManager(object):
           A new homogeneous transform matrix for the object
         """
         if name in self._objs:
-            o = self._objs[name]['obj']
+            o = self._objs[name]["obj"]
             o.setRotation(transform[:3, :3])
             o.setTranslation(transform[:3, 3])
             self._manager.update(o)
         else:
-            raise ValueError('{} not in collision manager!'.format(name))
+            raise ValueError(f"{name} not in collision manager!")
 
-    def in_collision_single(self,
-                            mesh,
-                            transform=None,
-                            return_names=False,
-                            return_data=False):
+    def in_collision_single(
+        self, mesh, transform=None, return_names=False, return_data=False
+    ):
         """
         Check a single object for collisions against all objects in the
         manager.
@@ -289,17 +288,19 @@ class CollisionManager(object):
         if transform is None:
             transform = np.eye(4)
 
-        # Create FCL data
-        b = self._get_BVH(mesh)
+        # create BVH/Convex
+        geom = self._get_fcl_obj(mesh)
+
+        # create the FCL transform from (4,4) matrix
         t = fcl.Transform(transform[:3, :3], transform[:3, 3])
-        o = fcl.CollisionObject(b, t)
+        o = fcl.CollisionObject(geom, t)
 
         # Collide with manager's objects
         cdata = fcl.CollisionData()
         if return_names or return_data:
-            cdata = fcl.CollisionData(request=fcl.CollisionRequest(
-                num_max_contacts=100000,
-                enable_contact=True))
+            cdata = fcl.CollisionData(
+                request=fcl.CollisionRequest(num_max_contacts=100000, enable_contact=True)
+            )
 
         self._manager.collide(o, cdata, fcl.defaultCollisionCallback)
         result = cdata.result.is_collision
@@ -310,13 +311,13 @@ class CollisionManager(object):
         if return_names or return_data:
             for contact in cdata.result.contacts:
                 cg = contact.o1
-                if cg == b:
+                if cg == geom:
                     cg = contact.o2
                 name = self._extract_name(cg)
 
-                names = (name, '__external')
+                names = (name, "__external")
                 if cg == contact.o2:
-                    names = reversed(names)
+                    names = tuple(reversed(names))
 
                 if return_names:
                     objs_in_collision.add(name)
@@ -358,8 +359,9 @@ class CollisionManager(object):
         """
         cdata = fcl.CollisionData()
         if return_names or return_data:
-            cdata = fcl.CollisionData(request=fcl.CollisionRequest(
-                num_max_contacts=100000, enable_contact=True))
+            cdata = fcl.CollisionData(
+                request=fcl.CollisionRequest(num_max_contacts=100000, enable_contact=True)
+            )
 
         self._manager.collide(cdata, fcl.defaultCollisionCallback)
 
@@ -369,8 +371,7 @@ class CollisionManager(object):
         contact_data = []
         if return_names or return_data:
             for contact in cdata.result.contacts:
-                names = (self._extract_name(contact.o1),
-                         self._extract_name(contact.o2))
+                names = (self._extract_name(contact.o1), self._extract_name(contact.o2))
 
                 if return_names:
                     objs_in_collision.add(tuple(sorted(names)))
@@ -386,8 +387,7 @@ class CollisionManager(object):
         else:
             return result
 
-    def in_collision_other(self, other_manager,
-                           return_names=False, return_data=False):
+    def in_collision_other(self, other_manager, return_names=False, return_data=False):
         """
         Check if any object from this manager collides with any object
         from another manager.
@@ -418,12 +418,9 @@ class CollisionManager(object):
         cdata = fcl.CollisionData()
         if return_names or return_data:
             cdata = fcl.CollisionData(
-                request=fcl.CollisionRequest(
-                    num_max_contacts=100000,
-                    enable_contact=True))
-        self._manager.collide(other_manager._manager,
-                              cdata,
-                              fcl.defaultCollisionCallback)
+                request=fcl.CollisionRequest(num_max_contacts=100000, enable_contact=True)
+            )
+        self._manager.collide(other_manager._manager, cdata, fcl.defaultCollisionCallback)
         result = cdata.result.is_collision
 
         objs_in_collision = set()
@@ -431,18 +428,22 @@ class CollisionManager(object):
         if return_names or return_data:
             for contact in cdata.result.contacts:
                 reverse = False
-                names = (self._extract_name(contact.o1),
-                         other_manager._extract_name(contact.o2))
+                names = (
+                    self._extract_name(contact.o1),
+                    other_manager._extract_name(contact.o2),
+                )
                 if names[0] is None:
-                    names = (self._extract_name(contact.o2),
-                             other_manager._extract_name(contact.o1))
+                    names = (
+                        self._extract_name(contact.o2),
+                        other_manager._extract_name(contact.o1),
+                    )
                     reverse = True
 
                 if return_names:
                     objs_in_collision.add(names)
                 if return_data:
                     if reverse:
-                        names = reversed(names)
+                        names = tuple(reversed(names))
                     contact_data.append(ContactData(names, contact))
 
         if return_names and return_data:
@@ -454,11 +455,9 @@ class CollisionManager(object):
         else:
             return result
 
-    def min_distance_single(self,
-                            mesh,
-                            transform=None,
-                            return_name=False,
-                            return_data=False):
+    def min_distance_single(
+        self, mesh, transform=None, return_name=False, return_data=False
+    ):
         """
         Get the minimum distance between a single object and any
         object in the manager.
@@ -486,18 +485,21 @@ class CollisionManager(object):
         if transform is None:
             transform = np.eye(4)
 
-        # Create FCL data
-        b = self._get_BVH(mesh)
+        # create BVH/Convex
+        geom = self._get_fcl_obj(mesh)
 
+        # create the FCL transform from (4,4) matrix
         t = fcl.Transform(transform[:3, :3], transform[:3, 3])
-        o = fcl.CollisionObject(b, t)
+        o = fcl.CollisionObject(geom, t)
 
         # Collide with manager's objects
-        ddata = fcl.DistanceData()
+        ddata = fcl.DistanceData(fcl.DistanceRequest(enable_signed_distance=True))
         if return_data:
             ddata = fcl.DistanceData(
-                fcl.DistanceRequest(enable_nearest_points=True),
-                fcl.DistanceResult()
+                fcl.DistanceRequest(
+                    enable_nearest_points=True, enable_signed_distance=True
+                ),
+                fcl.DistanceResult(),
             )
 
         self._manager.distance(o, ddata, fcl.defaultDistanceCallback)
@@ -508,14 +510,14 @@ class CollisionManager(object):
         name, data = None, None
         if return_name or return_data:
             cg = ddata.result.o1
-            if cg == b:
+            if cg == geom:
                 cg = ddata.result.o2
 
             name = self._extract_name(cg)
 
-            names = (name, '__external')
+            names = (name, "__external")
             if cg == ddata.result.o2:
-                names = reversed(names)
+                names = tuple(reversed(names))
             data = DistanceData(names, ddata.result)
 
         if return_name and return_data:
@@ -548,11 +550,14 @@ class CollisionManager(object):
         data : DistanceData
           Extra data about the distance query
         """
-        ddata = fcl.DistanceData()
+        ddata = fcl.DistanceData(fcl.DistanceRequest(enable_signed_distance=True))
         if return_data:
             ddata = fcl.DistanceData(
-                fcl.DistanceRequest(enable_nearest_points=True),
-                fcl.DistanceResult()
+                fcl.DistanceRequest(
+                    enable_nearest_points=True,
+                    enable_signed_distance=True,
+                ),
+                fcl.DistanceResult(),
             )
 
         self._manager.distance(ddata, fcl.defaultDistanceCallback)
@@ -561,8 +566,10 @@ class CollisionManager(object):
 
         names, data = None, None
         if return_names or return_data:
-            names = (self._extract_name(ddata.result.o1),
-                     self._extract_name(ddata.result.o2))
+            names = (
+                self._extract_name(ddata.result.o1),
+                self._extract_name(ddata.result.o2),
+            )
             data = DistanceData(names, ddata.result)
             names = tuple(sorted(names))
 
@@ -575,8 +582,7 @@ class CollisionManager(object):
         else:
             return distance
 
-    def min_distance_other(self, other_manager,
-                           return_names=False, return_data=False):
+    def min_distance_other(self, other_manager, return_names=False, return_data=False):
         """
         Get the minimum distance between any pair of objects,
         one in each manager.
@@ -603,32 +609,37 @@ class CollisionManager(object):
         data : DistanceData
           Extra data about the distance query
         """
-        ddata = fcl.DistanceData()
+        ddata = fcl.DistanceData(fcl.DistanceRequest(enable_signed_distance=True))
         if return_data:
             ddata = fcl.DistanceData(
-                fcl.DistanceRequest(enable_nearest_points=True),
-                fcl.DistanceResult()
+                fcl.DistanceRequest(
+                    enable_nearest_points=True,
+                    enable_signed_distance=True,
+                ),
+                fcl.DistanceResult(),
             )
 
-        self._manager.distance(other_manager._manager,
-                               ddata,
-                               fcl.defaultDistanceCallback)
+        self._manager.distance(other_manager._manager, ddata, fcl.defaultDistanceCallback)
 
         distance = ddata.result.min_distance
 
         names, data = None, None
         if return_names or return_data:
             reverse = False
-            names = (self._extract_name(ddata.result.o1),
-                     other_manager._extract_name(ddata.result.o2))
+            names = (
+                self._extract_name(ddata.result.o1),
+                other_manager._extract_name(ddata.result.o2),
+            )
             if names[0] is None:
                 reverse = True
-                names = (self._extract_name(ddata.result.o2),
-                         other_manager._extract_name(ddata.result.o1))
+                names = (
+                    self._extract_name(ddata.result.o2),
+                    other_manager._extract_name(ddata.result.o1),
+                )
 
             dnames = tuple(names)
             if reverse:
-                dnames = reversed(dnames)
+                dnames = tuple(reversed(dnames))
             data = DistanceData(dnames, ddata.result)
 
         if return_names and return_data:
@@ -640,22 +651,26 @@ class CollisionManager(object):
         else:
             return distance
 
-    def _get_BVH(self, mesh):
+    def _get_fcl_obj(self, mesh):
         """
-        Get a BVH for a mesh.
+        Get a BVH or Convex for a mesh.
 
         Parameters
         -------------
         mesh : Trimesh
-          Mesh to create BVH for
+          Mesh to create BVH/Convex for
 
         Returns
         --------------
-        bvh : fcl.BVHModel
-          BVH object of source mesh
+        obj : fcl.BVHModel or fcl.Convex
+          BVH/Convex object of source mesh
         """
-        bvh = mesh_to_BVH(mesh)
-        return bvh
+
+        if mesh.is_convex:
+            obj = mesh_to_convex(mesh)
+        else:
+            obj = mesh_to_BVH(mesh)
+        return obj
 
     def _extract_name(self, geom):
         """
@@ -690,12 +705,30 @@ def mesh_to_BVH(mesh):
       BVH of input geometry
     """
     bvh = fcl.BVHModel()
-    bvh.beginModel(num_tris_=len(mesh.faces),
-                   num_vertices_=len(mesh.vertices))
-    bvh.addSubModel(verts=mesh.vertices,
-                    triangles=mesh.faces)
+    bvh.beginModel(num_tris_=len(mesh.faces), num_vertices_=len(mesh.vertices))
+    bvh.addSubModel(verts=mesh.vertices, triangles=mesh.faces)
     bvh.endModel()
     return bvh
+
+
+def mesh_to_convex(mesh):
+    """
+    Create a Convex object from a Trimesh object
+
+    Parameters
+    -----------
+    mesh : Trimesh
+      Input geometry
+
+    Returns
+    ------------
+    convex : fcl.Convex
+      Convex of input geometry
+    """
+    fs = np.concatenate(
+        (3 * np.ones((len(mesh.faces), 1), dtype=np.int64), mesh.faces), axis=1
+    )
+    return fcl.Convex(mesh.vertices, len(fs), fs.flatten())
 
 
 def scene_to_collision(scene):
@@ -718,7 +751,7 @@ def scene_to_collision(scene):
     objects = {}
     for node in scene.graph.nodes_geometry:
         T, geometry = scene.graph[node]
-        objects[node] = manager.add_object(name=node,
-                                           mesh=scene.geometry[geometry],
-                                           transform=T)
+        objects[node] = manager.add_object(
+            name=node, mesh=scene.geometry[geometry], transform=T
+        )
     return manager, objects

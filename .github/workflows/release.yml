@@ -3,170 +3,133 @@ name: Release Trimesh
 on:
   push:
     branches:
-      - master
+      - main
+      - release-candidate
 
 jobs:
   formatting:
     name: Check Code Formatting
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
       with:
-        python-version: 3.8
+        python-version: "3.13"
     - name: Install Formatting
       run: |
-        python -m pip install --upgrade pip
-        pip install autopep8 flake8
+        pip install ruff
     - name: Check Formatting
-      run: |
-        flake8 tests
-        flake8 trimesh
-        flake8 examples
-        flake8 setup.py
-        autopep8 --recursive --aggressive --diff --exit-code trimesh/
-        autopep8 --recursive --aggressive --diff --exit-code examples/
-        autopep8 --recursive --aggressive --diff --exit-code tests/
-
+      run: ruff check .
   tests:
     name: Run Unit Tests
     needs: formatting
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: [2.7, 3.5, 3.6, 3.7, 3.8, 3.9]
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest, macos-latest, macos-13, windows-latest]
         exclude:
-          # Shapely as far as I can tell has no Windows/2.7 wheels
+            # windows runners have gotten flaky
           - os: windows-latest
-            python-version: 2.7
-          - os: macos-latest
+            python-version: 3.8
+          - os: windows-latest
+            python-version: 3.9
+          - os: macos-13
             python-version: 3.9
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install APT On Linux
-      if: matrix.os == 'ubuntu-latest'
+    - name: Test a minimal install
       run: |
-        sudo apt-get update -qq -y
-        sudo apt-get install -qq -y libgeos-dev
-    - name: Install Brew On Mac
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew install geos
-        brew install --cask openscad
-    - name: Install Pytest
-      run: |
-        python -m pip install --upgrade pip
-        pip install pytest pytest-cov wheel coveralls setuptools
+        pip install --no-cache-dir .
+        python tests/test_minimal.py
     - name: Install Trimesh
-      run: pip install .[easy]
-    - name: Install Linux Deps
-      if: matrix.os == 'ubuntu-latest'
-      run: sudo bash docker/builds/gltf_validator.bash
+      run: pip install --no-cache-dir .[easy,test]
     - name: Run Pytest
-      run: pytest --cov=trimesh tests/
-    - name: Coverage Report
-      if: matrix.os == 'ubuntu-latest'
-      env:
-        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      run: bash <(curl -s https://codecov.io/bash)
+      run: pytest tests/
+
   pypi:
     name: Release To PyPi
-    needs: [tests, containers]
+    needs: [tests, containers, corpus]
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.x'
+        python-version: '3.13'
     - name: Install publishing dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install setuptools wheel twine
-    - name: Build and publish
-      env:
-        TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-        TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-      run: |
-        python setup.py sdist bdist_wheel
-        twine upload dist/*
-
-  docs:
-    name: Build Docs
-    needs: [tests, containers]
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: Build Docs
-      run: |
-         # build docs in docker image to get working trimesh env for docstrings
-         docker pull trimesh/trimesh:latest
-         docker run --rm --user 0:0 -v `pwd`:/trimesh trimesh/trimesh:latest make -C /trimesh/docs
-    - name: Deploy To Pages
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./docs/_build/html
-        force_orphan: true
+      run: pip install build
+    - name: Build
+      run: pyproject-build --outdir dist .
+    - name: Publish
+      uses: pypa/gh-action-pypi-publish@v1.13.0
 
   containers:
     name: Build Docker Images
     runs-on: ubuntu-latest
     steps:
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-2
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
-    - name: Login to Docker Hub
+    - name: Log In to Docker Hub
       run: echo ${{ secrets.DH_PASS }} | docker login --username mikedh --password-stdin
     - name: Checkout trimesh
-      uses: actions/checkout@v2
-    - name: Build/Push to DockerHub and AWS ECR
+      uses: actions/checkout@v4
+    - name: Build Images And Docs
       env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
-        GIT_SHA: ${{ github.sha }}
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       run: |
-        # get the version of trimesh with python
-        export VERSION=$(python -c "exec(open('trimesh/version.py','r').read()); print(__version__)")
-        # tag the image with the short git sha
-        export GIT_SHORT=${GIT_SHA::7}
-        # put a whole bunch of tags on image:
-        # tag with version, git sha, and latest
-        # push to DockerHub and AWS ECR
-        export TAGS="trimesh/trimesh:latest; trimesh/trimesh:$VERSION; trimesh/trimesh:$GIT_SHORT; mikedh/trimesh:latest; mikedh/trimesh:$VERSION; mikedh/trimesh:$GIT_SHORT; $ECR_REGISTRY/$ECR_REPOSITORY:$VERSION; $ECR_REGISTRY/$ECR_REPOSITORY:latest; $ECR_REGISTRY/$ECR_REPOSITORY:$GIT_SHORT"
-        # build image tagged with all our many tags
-        docker build -t `echo "${TAGS//;/$' -t '}"` .
-        # push every tag to remote registry
-        for i in ${TAGS//;/ }; do docker push $i; done;
+        make tests # build docker images and run unit tests
+        make publish-docker # push images to docker hub
+        make docs # build sphinx docs
+    - name: Deploy Github Pages
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./html
+        force_orphan: true
     - name: Logout of registries
       if: always()
       run: |
-        docker logout ${{ steps.login-ecr.outputs.registry }}
         docker logout
 
+  corpus:
+    runs-on: ubuntu-latest
+    name: Check Corpus Loading
+    steps:
+    - uses: actions/checkout@v4
+    - name: Trimesh DiskCache
+      id: cache-resolvers
+      uses: actions/cache@v4
+      with:
+        path: ~/.trimesh-cache
+        key: trimesh-cache
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+         python-version: "3.10"
+    - name: Install Trimesh
+      run: pip install .[easy,test]
+    - name: Run Corpus Check
+      run: python tests/corpus.py -run
+
   release:
+    permissions:
+      contents: write  # for actions/create-release
     name: Create GitHub Release
-    needs: [tests, containers]
+    needs: [pypi]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@master
+        uses: actions/checkout@v4
       - name: Tag Version
         id: set_tag
         run: |
-          export VER=$(python -c "exec(open('trimesh/version.py','r').read());print(__version__)")
+          export VER=$(python trimesh/version.py)
           echo "::set-output name=tag_name::${VER}"
       - name: Create Release
         id: create_release
@@ -177,4 +140,5 @@ jobs:
           tag_name: ${{ steps.set_tag.outputs.tag_name }}
           release_name: Release ${{ steps.set_tag.outputs.tag_name }}
           draft: false
+          body: ${{ github.event.head_commit.message }}
           prerelease: false

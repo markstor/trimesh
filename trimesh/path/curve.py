@@ -2,6 +2,7 @@ import numpy as np
 
 from ..constants import res_path as res
 from ..constants import tol_path as tol
+from ..typed import Integer, List
 
 
 def discretize_bezier(points, count=None, scale=1.0):
@@ -28,10 +29,9 @@ def discretize_bezier(points, count=None, scale=1.0):
         # this is so we can figure out how finely we have to sample t
         norm = np.linalg.norm(np.diff(points, axis=0), axis=1).sum()
         count = np.ceil(norm / (res.seg_frac * scale))
-        count = int(np.clip(
-            count,
-            res.min_sections * len(points),
-            res.max_sections * len(points)))
+        count = int(
+            np.clip(count, res.min_sections * len(points), res.max_sections * len(points))
+        )
     count = int(count)
 
     # parameterize incrementing 0.0 - 1.0
@@ -42,22 +42,25 @@ def discretize_bezier(points, count=None, scale=1.0):
     # binomial coefficients, i, and each point
     iterable = zip(binomial(n), np.arange(len(points)), points)
     # run the actual interpolation
-    stacked = [((t**i) * (t_d**(n - i))).reshape((-1, 1))
-               * p * c for c, i, p in iterable]
+    stacked = [
+        ((t**i) * (t_d ** (n - i))).reshape((-1, 1)) * p * c for c, i, p in iterable
+    ]
     result = np.sum(stacked, axis=0)
 
-    # test to make sure end points are correct
-    test = np.sum((result[[0, -1]] - points[[0, -1]])**2, axis=1)
-    assert (test < tol.merge).all()
-    assert len(result) >= 2
+    # a bezier curve always starts and ends on control points
+    if tol.strict:
+        # test to make sure end points are correct
+        test = np.sum((result[[0, -1]] - points[[0, -1]]) ** 2, axis=1)
+        assert (test < tol.merge).all()
+        assert len(result) >= 2
+
+    # snap the first and last points to the exact control point
+    result[[0, -1]] = points[[0, -1]]
 
     return result
 
 
-def discretize_bspline(control,
-                       knots,
-                       count=None,
-                       scale=1.0):
+def discretize_bspline(control, knots, count=None, scale=1.0):
     """
     Given a B-Splines control points and knot vector, return
     a sampled version of the curve.
@@ -80,14 +83,19 @@ def discretize_bspline(control,
 
     # evaluate the b-spline using scipy/fitpack
     from scipy.interpolate import splev
+
     # (n, d) control points where d is the dimension of vertices
     control = np.asanyarray(control, dtype=np.float64)
     degree = len(knots) - len(control) - 1
     if count is None:
         norm = np.linalg.norm(np.diff(control, axis=0), axis=1).sum()
-        count = int(np.clip(norm / (res.seg_frac * scale),
-                            res.min_sections * len(control),
-                            res.max_sections * len(control)))
+        count = int(
+            np.clip(
+                norm / (res.seg_frac * scale),
+                res.min_sections * len(control),
+                res.max_sections * len(control),
+            )
+        )
 
     ipl = np.linspace(knots[0], knots[-1], count)
     discrete = splev(ipl, [knots, control.T, degree])
@@ -96,7 +104,7 @@ def discretize_bspline(control,
     return discrete
 
 
-def binomial(n):
+def binomial(n: Integer) -> List:
     """
     Return all binomial coefficients for a given order.
 
@@ -124,4 +132,5 @@ def binomial(n):
         return [1, 5, 10, 10, 5, 1]
     else:
         from scipy.special import binom
+
         return binom(n, np.arange(n + 1))

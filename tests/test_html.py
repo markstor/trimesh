@@ -5,12 +5,10 @@ except BaseException:
 
 
 class ViewTest(g.unittest.TestCase):
-
     def test_JSHTML(self):
-
         import trimesh.viewer.notebook as js
 
-        m = g.get_mesh('featuretype.STL')
+        m = g.get_mesh("featuretype.STL")
         s = m.scene()
 
         # a viewable scene
@@ -19,11 +17,18 @@ class ViewTest(g.unittest.TestCase):
 
         # check it out as an LXML document
         from lxml.html import fromstring
+
         h = fromstring(html)
 
         # should have some children
         children = list(h.body.iterchildren())
         assert len(children) >= 2
+
+        try:
+            # make sure this is returning anything
+            assert js.scene_to_notebook(s) is not None
+        except ImportError:
+            g.log.debug("Probably no IPython to test", exc_info=True)
 
     def test_inNB(self):
         import trimesh.viewer.notebook as js
@@ -33,6 +38,6 @@ class ViewTest(g.unittest.TestCase):
         assert not js.in_notebook()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     g.trimesh.util.attach_to_log()
     g.unittest.main()

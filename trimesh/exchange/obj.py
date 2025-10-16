@@ -1,31 +1,38 @@
+import os
+import re
+from collections import defaultdict, deque
+
 import numpy as np
-from collections import deque, defaultdict
 
 try:
     # `pip install pillow`
     # optional: used for textured meshes
-    import PIL.Image as Image
+    from PIL import Image
 except BaseException as E:
     # if someone tries to use Image re-raise
     # the import error so they can debug easily
-    from ..exceptions import ExceptionModule
-    Image = ExceptionModule(E)
+    from ..exceptions import ExceptionWrapper
+
+    Image = ExceptionWrapper(E)
 
 from .. import util
-from ..visual.color import to_float
-from ..visual.texture import unmerge_faces, TextureVisuals
-from ..visual.material import SimpleMaterial
-
 from ..constants import log, tol
+from ..resolvers import ResolverLike
+from ..typed import Dict, Loadable, Optional
+from ..visual.color import to_float
+from ..visual.material import SimpleMaterial
+from ..visual.texture import TextureVisuals, unmerge_faces
 
 
-def load_obj(file_obj,
-             resolver=None,
-             split_object=False,
-             group_material=True,
-             skip_materials=False,
-             maintain_order=False,
-             **kwargs):
+def load_obj(
+    file_obj: Loadable,
+    resolver: Optional[ResolverLike] = None,
+    group_material: bool = True,
+    skip_materials: bool = False,
+    maintain_order: bool = False,
+    metadata: Optional[Dict] = None,
+    **kwargs,
+):
     """
     Load a Wavefront OBJ file into kwargs for a trimesh.Scene
     object.
@@ -37,8 +44,6 @@ def load_obj(file_obj,
     resolver : trimesh.visual.resolvers.Resolver
       Allow assets such as referenced textures and
       material files to be loaded
-    split_object : bool
-      Split meshes at each `o` declared in file
     group_material : bool
       Group faces that share the same material
       into the same mesh.
@@ -56,46 +61,42 @@ def load_obj(file_obj,
     """
     # get text as bytes or string blob
     text = file_obj.read()
-
     # if text was bytes decode into string
     text = util.decode_text(text)
 
     # add leading and trailing newlines so we can use the
     # same logic even if they jump directly in to data lines
-    text = '\n{}\n'.format(text.strip().replace('\r\n', '\n'))
+    text = "\n{}\n".format(text.strip().replace("\r\n", "\n"))
 
-    # remove backslash continuation characters and merge them into the same line
-    text = text.replace('\\\n', '')
+    # remove backslash continuation characters and merge them into the same
+    # line
+    text = text.replace("\\\n", "")
 
     # Load Materials
     materials = {}
-    mtl_position = text.find('mtllib')
+    mtl_position = text.find("mtllib")
     if not skip_materials and mtl_position >= 0:
         # take the line of the material file after `mtllib`
         # which should be the file location of the .mtl file
-        mtl_path = text[mtl_position + 6:text.find('\n', mtl_position)].strip()
+        mtl_path = text[mtl_position + 6 : text.find("\n", mtl_position)].strip()
         try:
             # use the resolver to get the data
-            material_kwargs = parse_mtl(resolver[mtl_path],
-                                        resolver=resolver)
+            material_kwargs = parse_mtl(resolver[mtl_path], resolver=resolver)
             # turn parsed kwargs into material objects
-            materials = {k: SimpleMaterial(**v)
-                         for k, v in material_kwargs.items()}
-        except IOError:
+            materials = {k: SimpleMaterial(**v) for k, v in material_kwargs.items()}
+        except (OSError, TypeError):
             # usually the resolver couldn't find the asset
-            log.warning('unable to load materials from: {}'.format(mtl_path))
+            log.debug(f"unable to load materials from: {mtl_path}")
         except BaseException:
             # something else happened so log a warning
-            log.warning('unable to load materials from: {}'.format(mtl_path),
-                        exc_info=True)
+            log.debug(f"unable to load materials from: {mtl_path}", exc_info=True)
 
     # extract vertices from raw text
     v, vn, vt, vc = _parse_vertices(text=text)
 
     # get relevant chunks that have face data
     # in the form of (material, object, chunk)
-    face_tuples = _preprocess_faces(
-        text=text, split_object=split_object)
+    face_tuples = _preprocess_faces(text=text)
 
     # combine chunks that have the same material
     # some meshes end up with a LOT of components
@@ -106,11 +107,11 @@ def load_obj(file_obj,
     # no faces but points given
     # return point cloud
     if not len(face_tuples) and v is not None:
-        pc = {'vertices': v}
+        pc = {"vertices": v}
         if vn is not None:
-            pc['vertex_normals'] = vn
+            pc["vertex_normals"] = vn
         if vc is not None:
-            pc['vertex_colors'] = vc
+            pc["vertex_colors"] = vc
         return pc
 
     # Load Faces
@@ -133,39 +134,58 @@ def load_obj(file_obj,
         # maxsplit=1 means that it can stop working
         # after it finds the first newline
         # passed as arg as it's not a kwarg in python2
-        face_lines = [i.split('\n', 1)[0]
-                      for i in chunk.split('\nf ')[1:]]
-        # then we are going to replace all slashes with spaces
-        joined = ' '.join(face_lines).replace('/', ' ')
+        face_lines = [
+            i.split("\n", 1)[0].strip()
+            for i in re.split("^f", chunk, flags=re.MULTILINE)[1:]
+        ]
 
-        # the fastest way to get to a numpy array
-        # processes the whole string at once into a 1D array
-        # also wavefront is 1-indexed (vs 0-indexed) so offset
-        array = np.fromstring(joined, sep=' ', dtype=np.int64) - 1
-
-        # get the number of raw 2D columns in a sample line
-        columns = len(face_lines[0].strip().replace('/', ' ').split())
+        # check every face for mixed tri-quad-ngon
+        columns = len(face_lines[0].replace("/", " ").split())
+        flat_array = all(columns == len(f.replace("/", " ").split()) for f in face_lines)
 
         # make sure we have the right number of values for vectorized
-        if len(array) == (columns * len(face_lines)):
+        if flat_array:
+            # the fastest way to get to a numpy array
+            # processes the whole string at once into a 1D array
+            array = np.fromstring(
+                " ".join(face_lines).replace("/", " "), sep=" ", dtype=np.int64
+            )
+            # also wavefront is 1-indexed (vs 0-indexed) so offset
+            # only applies to positive indices
+            array[array > 0] -= 1
+
             # everything is a nice 2D array
             faces, faces_tex, faces_norm = _parse_faces_vectorized(
-                array=array,
-                columns=columns,
-                sample_line=face_lines[0])
+                array=array, columns=columns, sample_line=face_lines[0]
+            )
         else:
             # if we had something annoying like mixed in quads
             # or faces that differ per-line we have to loop
             # i.e. something like:
             #  '31407 31406 31408',
             #  '32303/2469 32304/2469 32305/2469',
-            log.debug('faces have mixed data, using slow fallback!')
+            log.debug("faces have mixed data: using slow fallback!")
             faces, faces_tex, faces_norm = _parse_faces_fallback(face_lines)
 
-        # TODO: name usually falls back to something useless
-        name = current_object
-        if name is None or len(name) == 0 or name in geometry:
-            name = '{}_{}'.format(name, util.unique_id())
+        if group_material and len(materials) > 1:
+            name = material
+        elif current_object is not None:
+            name = current_object
+        else:
+            # try to use the file name from the resolver
+            # or file object if possible before defaulting
+            name = next(
+                i
+                for i in (
+                    getattr(resolver, "file_name", None),
+                    getattr(file_obj, "name", None),
+                    "geometry",
+                )
+                if i is not None
+            )
+
+        # ensure the name is always unique
+        name = util.unique_name(name, geometry)
 
         # try to get usable texture
         mesh = kwargs.copy()
@@ -175,12 +195,14 @@ def load_obj(file_obj,
             # where each face
             if faces_norm is not None and len(faces_norm) == len(faces):
                 new_faces, mask_v, mask_vt, mask_vn = unmerge_faces(
-                    faces, faces_tex, faces_norm, maintain_faces=maintain_order)
+                    faces, faces_tex, faces_norm, maintain_faces=maintain_order
+                )
             else:
                 mask_vn = None
                 # no face normals but face texturre
                 new_faces, mask_v, mask_vt = unmerge_faces(
-                    faces, faces_tex, maintain_faces=maintain_order)
+                    faces, faces_tex, maintain_faces=maintain_order
+                )
 
             if tol.strict:
                 # we should NOT have messed up the faces
@@ -194,29 +216,31 @@ def load_obj(file_obj,
                 # want materials without UV coordinates
                 uv = vt[mask_vt]
             except BaseException:
-                log.warning('index failed on UV coordinates, skipping!')
+                log.debug("index failed on UV coordinates, skipping!")
                 uv = None
 
             # mask vertices and use new faces
-            mesh.update({'vertices': v[mask_v].copy(),
-                         'faces': new_faces})
+            mesh.update({"vertices": v[mask_v].copy(), "faces": new_faces})
 
         else:
             # otherwise just use unmasked vertices
             uv = None
-
             # check to make sure indexes are in bounds
             if tol.strict:
                 assert faces.max() < len(v)
-
             if vn is not None and np.shape(faces_norm) == faces.shape:
                 # do the crazy unmerging logic for split indices
                 new_faces, mask_v, mask_vn = unmerge_faces(
-                    faces, faces_norm, maintain_faces=maintain_order)
+                    faces, faces_norm, maintain_faces=maintain_order
+                )
             else:
+                # face_tex is None and
                 # generate the mask so we only include
                 # referenced vertices in every new mesh
-                mask_v = np.zeros(len(v), dtype=bool)
+                if maintain_order:
+                    mask_v = np.ones(len(v), dtype=bool)
+                else:
+                    mask_v = np.zeros(len(v), dtype=bool)
                 mask_v[faces] = True
 
                 # reconstruct the faces with the new vertex indices
@@ -227,54 +251,49 @@ def load_obj(file_obj,
                 mask_vn = None
 
             # start with vertices and faces
-            mesh.update({'faces': new_faces,
-                         'vertices': v[mask_v].copy()})
+            mesh.update({"faces": new_faces, "vertices": v[mask_v].copy()})
 
-            # if colors and normals are OK save them
-            if vc is not None:
-                try:
-                    # may fail on a malformed color mask
-                    mesh['vertex_colors'] = vc[mask_v]
-                except BaseException:
-                    log.warning('failed to load vertex_colors',
-                                exc_info=True)
-            if mask_vn is not None:
-                try:
-                    # may fail on a malformed mask
-                    mesh['vertex_normals'] = vn[mask_vn]
-                except BaseException:
-                    log.warning('failed to load vertex_normals',
-                                exc_info=True)
+        # if colors and normals are OK save them
+        if vc is not None:
+            try:
+                # may fail on a malformed color mask
+                mesh["vertex_colors"] = vc[mask_v]
+            except BaseException:
+                log.debug("failed to load vertex_colors", exc_info=True)
+        if mask_vn is not None:
+            try:
+                # may fail on a malformed mask
+                normals = vn[mask_vn]
+                if normals.shape != mesh["vertices"].shape:
+                    raise ValueError(
+                        "incorrect normals {} != {}".format(
+                            str(normals.shape), str(mesh["vertices"].shape)
+                        )
+                    )
+                mesh["vertex_normals"] = normals
+            except BaseException:
+                log.debug("failed to load vertex_normals", exc_info=True)
+
         visual = None
         if material in materials:
             # use the material with the UV coordinates
-            visual = TextureVisuals(
-                uv=uv, material=materials[material])
-        elif uv is not None and len(uv) == len(mesh['vertices']):
+            visual = TextureVisuals(uv=uv, material=materials[material])
+        elif uv is not None and len(uv) == len(mesh["vertices"]):
             # create a texture with an empty materials
             visual = TextureVisuals(uv=uv)
         elif material is not None:
             # case where material is specified but not available
-            log.warning('specified material ({})  not loaded!'.format(
-                material))
+            log.debug(f"specified material ({material})  not loaded!")
         # assign the visual
-        mesh['visual'] = visual
+        mesh["visual"] = visual
         # store geometry by name
         geometry[name] = mesh
 
-    if len(geometry) == 1:
-        # TODO : should this be removed to always return a scene?
-        return next(iter(geometry.values()))
-
     # add an identity transform for every geometry
-    graph = [{'geometry': k, 'frame_to': k, 'matrix': np.eye(4)}
-             for k in geometry.keys()]
+    graph = [{"geometry": k, "frame_to": k} for k in geometry.keys()]
 
     # convert to scene kwargs
-    result = {'geometry': geometry,
-              'graph': graph}
-
-    return result
+    return {"geometry": geometry, "graph": graph}
 
 
 def parse_mtl(mtl, resolver=None):
@@ -304,10 +323,7 @@ def parse_mtl(mtl, resolver=None):
     lines = str.splitlines(str(mtl).strip())
 
     # remap OBJ property names to kwargs for SimpleMaterial
-    mapped = {'Kd': 'diffuse',
-              'Ka': 'ambient',
-              'Ks': 'specular',
-              'Ns': 'glossiness'}
+    mapped = {"kd": "diffuse", "ka": "ambient", "ks": "specular", "ns": "glossiness"}
 
     for line in lines:
         # split by white space
@@ -316,27 +332,34 @@ def parse_mtl(mtl, resolver=None):
         if len(split) <= 1:
             continue
         # the first value is the parameter name
-        key = split[0]
+        key = split[0].lower()
         # start a new material
-        if key == 'newmtl':
+        if key == "newmtl":
             # material name extracted from line like:
             # newmtl material_0
             if material is not None:
                 # save the old material by old name and remove key
-                materials[material.pop('newmtl')] = material
+                materials[material["name"]] = material
             # start a fresh new material
-            material = {'newmtl': ' '.join(split[1:])}
+            # do we really want to support material names with whitespace?
+            material = {"name": " ".join(split[1:])}
 
-        elif key == 'map_Kd':
+        elif key == "map_kd":
             # represents the file name of the texture image
+            index = line.lower().index("map_kd") + 6
+            file_name = line[index:].strip()
             try:
-                file_data = resolver.get(split[1])
+                file_data = resolver.get(file_name)
                 # load the bytes into a PIL image
                 # an image file name
-                material['image'] = Image.open(
-                    util.wrap_as_stream(file_data))
+                material["image"] = Image.open(util.wrap_as_stream(file_data))
+                # also store the original map_kd file name
+                material["image"].info["file_path"] = os.path.abspath(
+                    os.path.join(getattr(resolver, "parent", ""), file_name)
+                )
+
             except BaseException:
-                log.warning('failed to load image', exc_info=True)
+                log.debug("failed to load image", exc_info=True)
 
         elif key in mapped.keys():
             try:
@@ -345,19 +368,20 @@ def parse_mtl(mtl, resolver=None):
                 # if there is only one value return that
                 if len(value) == 1:
                     value = value[0]
-                # store the key by mapped value
-                material[mapped[key]] = value
-                # also store key by OBJ name
-                material[key] = value
+                if material is not None:
+                    # store the key by mapped value
+                    material[mapped[key]] = value
+                    # also store key by OBJ name
+                    material[key] = value
             except BaseException:
-                log.warning('failed to convert color!', exc_info=True)
+                log.debug("failed to convert color!", exc_info=True)
         # pass everything as kwargs to material constructor
         elif material is not None:
             # save any other unspecified keys
             material[key] = split[1:]
     # reached EOF so save any existing materials
     if material:
-        materials[material.pop('newmtl')] = material
+        materials[material["name"]] = material
 
     return materials
 
@@ -401,13 +425,13 @@ def _parse_faces_vectorized(array, columns, sample_line):
     # TODO: probably need to support 8 and 12 columns for quads
     # or do something more general
     faces_tex, faces_norm = None, None
-    if columns == 6:
+    if columns == group_count * 2:
         # if we have two values per vertex the second
         # one is index of texture coordinate (`vt`)
         # count how many delimiters are in the first face line
         # to see if our second value is texture or normals
         # do splitting to clip off leading/trailing slashes
-        count = ''.join(i.strip('/') for i in sample_line.split()).count('/')
+        count = "".join(i.strip("/") for i in sample_line.split()).count("/")
         if count == columns:
             # case where each face line looks like:
             # ' 75//139 76//141 77//141'
@@ -419,9 +443,8 @@ def _parse_faces_vectorized(array, columns, sample_line):
             # which is vertex/texture
             faces_tex = array[:, index + 1]
         else:
-            log.warning('face lines are weird: {}'.format(
-                sample_line))
-    elif columns == 9:
+            log.debug(f"face lines are weird: {sample_line}")
+    elif columns == group_count * 3:
         # if we have three values per vertex
         # second value is always texture
         faces_tex = array[:, index + 1]
@@ -453,38 +476,37 @@ def _parse_faces_fallback(lines):
     for line in lines:
         # remove leading newlines then
         # take first bit before newline then split by whitespace
-        split = line.strip().split('\n')[0].split()
+        split = line.strip().split("\n")[0].split()
         # split into: ['76/558/76', '498/265/498', '456/267/456']
         len_split = len(split)
         if len_split == 3:
             pass
         elif len_split == 4:
             # triangulate quad face
-            split = [split[0],
-                     split[1],
-                     split[2],
-                     split[2],
-                     split[3],
-                     split[0]]
+            split = [split[0], split[1], split[2], split[2], split[3], split[0]]
         elif len_split > 4:
-            # triangulate polygon, as a triangles fan
-            r_split = []
-            r_split_append = r_split.append
-            for i in range(len(split) - 2):
-                r_split_append(split[0])
-                r_split_append(split[i + 1])
-                r_split_append(split[i + 2])
-            split = r_split
+            # triangulate polygon as a triangles fan
+            collect = []
+            # we need a flat list so append inside
+            # a list comprehension
+            collect_append = collect.append
+            [
+                [
+                    collect_append(split[0]),
+                    collect_append(split[i + 1]),
+                    collect_append(split[i + 2]),
+                ]
+                for i in range(len(split) - 2)
+            ]
+            split = collect
         else:
-            log.warning(
-                'face need at least 3 elements (got {})! skipping!'.format(
-                    len(split)))
+            log.debug(f"face needs more values 3>{len(split)} skipping!")
             continue
 
         # f is like: '76/558/76'
         for f in split:
             # vertex, vertex texture, vertex normal
-            split = f.split('/')
+            split = f.split("/")
             # we always have a vertex reference
             v.append(int(split[0]))
 
@@ -500,12 +522,16 @@ def _parse_faces_fallback(lines):
                 pass
 
     # shape into triangles and switch to 0-indexed
-    faces = np.array(v, dtype=np.int64).reshape((-1, 3)) - 1
+    # 0-indexing only applies to positive indices
+    faces = np.array(v, dtype=np.int64).reshape((-1, 3))
+    faces[faces > 0] -= 1
     faces_tex, normals = None, None
     if len(vt) == len(v):
-        faces_tex = np.array(vt, dtype=np.int64).reshape((-1, 3)) - 1
+        faces_tex = np.array(vt, dtype=np.int64).reshape((-1, 3))
+        faces_tex[faces_tex > 0] -= 1
     if len(vn) == len(v):
-        normals = np.array(vn, dtype=np.int64).reshape((-1, 3)) - 1
+        normals = np.array(vn, dtype=np.int64).reshape((-1, 3))
+        normals[normals > 0] -= 1
 
     return faces, faces_tex, normals
 
@@ -537,28 +563,31 @@ def _parse_vertices(text):
     # up to the location of out our first vertex but we
     # are going to use this check for "do we have texture"
     # determination later so search the whole stupid file
-    starts = {k: text.find('\n{} '.format(k)) for k in
-              ['v', 'vt', 'vn']}
+    starts = {k: text.find(f"\n{k} ") for k in ["v", "vt", "vn"]}
 
     # no valid values so exit early
     if not any(v >= 0 for v in starts.values()):
         return None, None, None, None
 
     # find the last position of each valid value
-    ends = {k: text.find(
-        '\n', text.rfind('\n{} '.format(k)) + 2 + len(k))
-        for k, v in starts.items() if v >= 0}
+    ends = {
+        k: text.find("\n", text.rfind(f"\n{k} ") + 2 + len(k))
+        for k, v in starts.items()
+        if v >= 0
+    }
 
     # take the first and last position of any vertex property
     start = min(s for s in starts.values() if s >= 0)
     end = max(e for e in ends.values() if e >= 0)
     # get the chunk of test that contains vertex data
-    chunk = text[start:end].replace('+e', 'e').replace('-e', 'e')
+    chunk = text[start:end].replace("+e", "e").replace("-e", "e")
 
     # get the clean-ish data from the file as python lists
-    data = {k: [i.split('\n', 1)[0]
-                for i in chunk.split('\n{} '.format(k))[1:]]
-            for k, v in starts.items() if v >= 0}
+    data = {
+        k: [i.split("\n", 1)[0] for i in chunk.split(f"\n{k} ")[1:]]
+        for k, v in starts.items()
+        if v >= 0
+    }
 
     # count the number of data values per row on a sample row
     per_row = {k: len(v[0].split()) for k, v in data.items()}
@@ -567,27 +596,26 @@ def _parse_vertices(text):
     result = defaultdict(lambda: None)
     for k, value in data.items():
         # use joining and fromstring to get as numpy array
-        array = np.fromstring(
-            ' '.join(value), sep=' ', dtype=np.float64)
+        array = np.fromstring(" ".join(value), sep=" ", dtype=np.float64)
         # what should our shape be
         shape = (len(value), per_row[k])
         # check shape of flat data
-        if len(array) == np.product(shape):
+        if len(array) == np.prod(shape):
             # we have a nice 2D array
             result[k] = array.reshape(shape)
         else:
-            # try to recover with a slightly more expensive loop
-            count = per_row[k]
-            try:
-                # try to get result through reshaping
-                result[k] = np.fromstring(
-                    ' '.join(i.split()[:count] for i in value),
-                    sep=' ', dtype=np.float64).reshape(shape)
-            except BaseException:
-                pass
+            # we don't have a nice (n, d) array so fall back to a slow loop
+            # this is where mixed "some of the values but not all have vertex colors"
+            # problem is handled.
+            lines = []
+            [[lines.append(v.strip().split()) for v in str.splitlines(i)] for i in value]
+            # we need to make a 2D array so clip it to the shortest array
+            count = min(len(L) for L in lines)
+            # make a numpy array out of the cleaned up line data
+            result[k] = np.array([L[:count] for L in lines], dtype=np.float64)
 
     # vertices
-    v = result['v']
+    v = result["v"]
     # vertex colors are stored next to vertices
     vc = None
     if v is not None and v.shape[1] >= 6:
@@ -598,24 +626,24 @@ def _parse_vertices(text):
         v = v[:, :3]
 
     # vertex texture or None
-    vt = result['vt']
+    vt = result["vt"]
     if vt is not None:
         # sometimes UV coordinates come in as UVW
         vt = vt[:, :2]
     # vertex normals or None
-    vn = result['vn']
+    vn = result["vn"]
 
     # check will generally only be run in unit tests
     # so we are allowed to do things that are slow
     if tol.strict:
         # check to make sure our subsetting
         # didn't miss any vertices or data
-        assert len(v) == text.count('\nv ')
+        assert len(v) == text.count("\nv ")
         # make sure optional data matches file too
         if vn is not None:
-            assert len(vn) == text.count('\nvn ')
+            assert len(vn) == text.count("\nvn ")
         if vt is not None:
-            assert len(vt) == text.count('\nvt ')
+            assert len(vt) == text.count("\nvt ")
 
     return v, vn, vt, vc
 
@@ -637,7 +665,7 @@ def _group_by_material(face_tuples):
     """
 
     # store the chunks grouped by material
-    grouped = defaultdict(lambda: ['', '', []])
+    grouped = defaultdict(lambda: ["", "", []])
     # loop through existring
     for material, obj, chunk in face_tuples:
         grouped[material][0] = material
@@ -646,18 +674,32 @@ def _group_by_material(face_tuples):
         grouped[material][2].append(chunk)
     # go back and do a join to make a single string
     for k in grouped.keys():
-        grouped[k][2] = '\n'.join(grouped[k][2])
+        grouped[k][2] = "\n".join(grouped[k][2])
     # return as list
     return list(grouped.values())
 
 
-def _preprocess_faces(text, split_object=False):
-    # Pre-Process Face Text
-    # Rather than looking at each line in a loop we're
-    # going to split lines by directives which indicate
-    # a new mesh, specifically 'usemtl' and 'o' keys
-    # search for materials, objects, faces, or groups
-    starters = ['\nusemtl ', '\no ', '\nf ', '\ng ', '\ns ']
+def _preprocess_faces(text):
+    """
+    Pre-Process Face Text
+
+    Rather than looking at each line in a loop we're
+    going to split lines by directives which indicate
+    a new mesh, specifically 'usemtl' and 'o' keys
+    search for materials, objects, faces, or groups
+
+    Parameters
+    ------------
+    text : str
+      Raw file
+
+    Returns
+    ------------
+    triple : (n, 3) tuple
+      Tuples of (material, object, data-chunk)
+    """
+    # see which chunk is relevant
+    starters = ["\nusemtl ", "\no ", "\nf ", "\ng ", "\ns "]
     f_start = len(text)
     # first index of material, object, face, group, or smoother
     for st in starters:
@@ -670,7 +712,7 @@ def _preprocess_faces(text, split_object=False):
         if search < f_start:
             f_start = search
     # index in blob of the newline after the last face
-    f_end = text.find('\n', text.rfind('\nf ') + 3)
+    f_end = text.find("\n", text.rfind("\nf ") + 3)
     # get the chunk of the file that has face information
     if f_end >= 0:
         # clip to the newline after the last face
@@ -681,70 +723,56 @@ def _preprocess_faces(text, split_object=False):
 
     if tol.strict:
         # check to make sure our subsetting didn't miss any faces
-        assert f_chunk.count('\nf ') == text.count('\nf ')
+        assert f_chunk.count("\nf ") == text.count("\nf ")
 
-    # start with undefined objects and material
-    current_object = None
-    current_material = None
-    # where we're going to store result tuples
-    # containing (material, object, face lines)
+    # two things cause new meshes to be created:
+    # objects and materials
+    # re.finditer was faster than find in a loop
+    # find the index of every material change
+    idx_mtl = np.array([m.start(0) for m in re.finditer("usemtl ", f_chunk)], dtype=int)
+    # find the index of every new object
+    idx_obj = np.array([m.start(0) for m in re.finditer("\no ", f_chunk)], dtype=int)
+
+    # find all the indexes where we want to split
+    splits = np.unique(np.concatenate(([0, len(f_chunk)], idx_mtl, idx_obj)))
+
+    # track the current material and object ID
+    current_obj = None
+    current_mtl = None
+    # store (material, object, face lines)
     face_tuples = []
 
-    # two things cause new meshes to be created: objects and materials
-    # first divide faces into groups split by material and objects
-    # face chunks using different materials will be treated
-    # as different meshes
-    for m_chunk in f_chunk.split('\nusemtl '):
-        # if empty continue
-        if len(m_chunk) == 0:
-            continue
-
-        # find the first newline in the chunk
-        # everything before it will be the usemtl direction
-        new_line = m_chunk.find('\n')
-        # if the file contained no materials it will start with a newline
-        if new_line == 0:
-            current_material = None
-        else:
-            # remove internal double spaces because why wouldn't that be OK
-            current_material = ' '.join(m_chunk[:new_line].strip().split())
-
-        # material chunk contains multiple objects
-        if split_object:
-            o_split = m_chunk.split('\no ')
-        else:
-            o_split = [m_chunk]
-        if len(o_split) > 1:
-            for o_chunk in o_split:
-                # set the object label
-                current_object = o_chunk[:o_chunk.find('\n')].strip()
-                # find the first face in the chunk
-                f_idx = o_chunk.find('\nf ')
-                # if we have any faces append it to our search tuple
-                if f_idx >= 0:
-                    face_tuples.append(
-                        (current_material,
-                         current_object,
-                         o_chunk[f_idx:]))
-        else:
-            # if there are any faces in this chunk add them
-            f_idx = m_chunk.find('\nf ')
-            if f_idx >= 0:
-                face_tuples.append(
-                    (current_material,
-                     current_object,
-                     m_chunk[f_idx:]))
+    for start, end in zip(splits[:-1], splits[1:]):
+        # ensure there's always a trailing newline
+        chunk = f_chunk[start:end].strip() + "\n"
+        if chunk.startswith("o "):
+            current_obj, chunk = chunk.split("\n", 1)
+            current_obj = current_obj[2:].strip()
+        elif chunk.startswith("usemtl"):
+            current_mtl, chunk = chunk.split("\n", 1)
+            current_mtl = current_mtl[6:].strip()
+        # Discard the g tag line in the list of faces
+        elif chunk.startswith("g "):
+            _, chunk = chunk.split("\n", 1)
+        # If we have an f at the beginning of a line
+        # then add it to the list of faces chunks
+        if chunk.startswith("f ") or "\nf" in chunk:
+            face_tuples.append((current_mtl, current_obj, chunk))
     return face_tuples
 
 
-def export_obj(mesh,
-               include_normals=True,
-               include_color=True,
-               include_texture=True,
-               return_texture=False,
-               write_texture=True,
-               resolver=None,
-               digits=8):
+def export_obj(
+    mesh,
+    include_normals=None,
+    include_color=True,
+    include_texture=True,
+    return_texture=False,
+    write_texture=True,
+    resolver=None,
+    digits=8,
+    mtl_name=None,
+    header="https://github.com/mikedh/trimesh",
+):
     """
     Export a mesh as a Wavefront OBJ file.
     TODO: scenes with textured meshes
@@ -753,8 +781,9 @@ def export_obj(mesh,
     -----------
     mesh : trimesh.Trimesh
       Mesh to be exported
-    include_normals : bool
-      Include vertex normals in export
+    include_normals : Optional[bool]
+      Include vertex normals in export. If None
+      will only be included if vertex normals are in cache.
     include_color : bool
       Include vertex color in export
     include_texture : bool
@@ -768,138 +797,204 @@ def export_obj(mesh,
       Resolver which can write referenced text objects
     digits : int
       Number of digits to include for floating point
+    mtl_name : None or str
+      If passed, the file name of the MTL file.
+    header : str or None
+      Header string for top of file or None for no header.
 
     Returns
     -----------
     export : str
       OBJ format output
     texture : dict
-      [OPTIONAL]
       Contains files that need to be saved in the same
       directory as the exported mesh: {file name : bytes}
     """
     # store the multiple options for formatting
     # vertex indexes for faces
-    face_formats = {('v',): '{}',
-                    ('v', 'vn'): '{}//{}',
-                    ('v', 'vt'): '{}/{}',
-                    ('v', 'vn', 'vt'): '{}/{}/{}'}
+    face_formats = {
+        ("v",): "{}",
+        ("v", "vn"): "{}//{}",
+        ("v", "vt"): "{}/{}",
+        ("v", "vn", "vt"): "{}/{}/{}",
+    }
 
     # check the input
-    if util.is_instance_named(mesh, 'Trimesh'):
+    if util.is_instance_named(mesh, "Trimesh"):
         meshes = [mesh]
-    elif util.is_instance_named(mesh, 'Scene'):
+    elif util.is_instance_named(mesh, "Scene"):
         meshes = mesh.dump()
-    elif util.is_instance_named(mesh, 'PointCloud'):
+    elif util.is_instance_named(mesh, "PointCloud"):
         meshes = [mesh]
     else:
-        raise ValueError('must be Trimesh or Scene!')
+        raise ValueError("must be Trimesh or Scene!")
 
+    # collect lines to export
     objects = deque([])
+    # keep track of the number of each export element
+    counts = {"v": 0, "vn": 0, "vt": 0}
+    # collect materials as we go
+    materials = {}
+    materials_name = set()
 
-    counts = {'v': 0, 'vn': 0, 'vt': 0}
-
-    tex_data = None
-
-    for mesh in meshes:
+    for current in meshes:
         # we are going to reference face_formats with this
-        face_type = ['v']
+        face_type = ["v"]
         # OBJ includes vertex color as RGB elements on the same line
-        if (include_color and
-            mesh.visual.kind in ['vertex', 'face'] and
-                len(mesh.visual.vertex_colors)):
-
+        if (
+            include_color
+            and current.visual.kind in ["vertex", "face"]
+            and len(current.visual.vertex_colors)
+        ):
             # create a stacked blob with position and color
-            v_blob = np.column_stack((
-                mesh.vertices,
-                to_float(mesh.visual.vertex_colors[:, :3])))
+            v_blob = np.column_stack(
+                (current.vertices, to_float(current.visual.vertex_colors[:, :3]))
+            )
         else:
             # otherwise just export vertices
-            v_blob = mesh.vertices
+            v_blob = current.vertices
 
             # add the first vertex key and convert the array
         # add the vertices
         export = deque(
-            ['v ' + util.array_to_string(
-                v_blob,
-                col_delim=' ',
-                row_delim='\nv ',
-                digits=digits)])
-        # only include vertex normals if they're already stored
-        if include_normals and mesh._cache.cache.get('vertex_normals') is not None:
+            [
+                "v "
+                + util.array_to_string(
+                    v_blob, col_delim=" ", row_delim="\nv ", digits=digits
+                )
+            ]
+        )
 
+        # if include_normals is None then
+        # only include if they're already stored
+        if include_normals is None:
+            include_normals = "vertex_normals" in current._cache.cache
+
+        if include_normals:
             try:
                 converted = util.array_to_string(
-                    mesh.vertex_normals,
-                    col_delim=' ',
-                    row_delim='\nvn ',
-                    digits=digits)
+                    current.vertex_normals,
+                    col_delim=" ",
+                    row_delim="\nvn ",
+                    digits=digits,
+                )
                 # if vertex normals are stored in cache export them
-                face_type.append('vn')
-                export.append('vn ' + converted)
+                face_type.append("vn")
+                export.append("vn " + converted)
             except BaseException:
-                log.debug('failed to convert vertex normals',
-                          exc_info=True)
+                log.debug("failed to convert vertex normals", exc_info=True)
 
-        if include_texture and hasattr(mesh.visual, 'uv'):
+        # collect materials into a dict
+        if include_texture and hasattr(current.visual, "uv"):
             try:
-                material = mesh.visual.material
-                if hasattr(material, 'to_simple'):
+                # get a SimpleMaterial
+                material = current.visual.material
+                if hasattr(material, "to_simple"):
                     material = material.to_simple()
-                (tex_data,
-                 tex_name,
-                 mtl_name) = material.to_obj()
-                converted = util.array_to_string(
-                    mesh.visual.uv,
-                    col_delim=' ',
-                    row_delim='\nvt ',
-                    digits=digits)
-                # if vertex texture exists and is the right shape
-                face_type.append('vt')
-                # add the uv coordinates
-                export.append('vt ' + converted)
-                # add the reference to the MTL file
-                objects.appendleft('mtllib {}'.format(mtl_name))
+
+                # hash the material to avoid duplicates
+                hashed = hash(material)
+                if hashed not in materials:
+                    # get a unique name for the material
+                    name = util.unique_name(material.name, materials_name)
+                    # add the name to our collection
+                    materials_name.add(name)
+                    # convert material to an OBJ MTL
+                    materials[hashed] = material.to_obj(name=name)
+
+                # get the name of the current material as-stored
+                tex_name = materials[hashed][1]
+
+                # export the UV coordinates
+                if len(np.shape(getattr(current.visual, "uv", None))) == 2:
+                    converted = util.array_to_string(
+                        current.visual.uv, col_delim=" ", row_delim="\nvt ", digits=digits
+                    )
+                    # if vertex texture exists and is the right shape
+                    face_type.append("vt")
+                    # add the uv coordinates
+                    export.append("vt " + converted)
                 # add the directive to use the exported material
-                export.appendleft('usemtl {}'.format(tex_name))
+                export.appendleft(f"usemtl {tex_name}")
             except BaseException:
-                log.debug('failed to convert UV coordinates',
-                          exc_info=True)
+                log.debug("failed to convert UV coordinates", exc_info=True)
 
         # the format for a single vertex reference of a face
         face_format = face_formats[tuple(face_type)]
         # add the exported faces to the export if available
-        if hasattr(mesh, 'faces'):
-            export.append('f ' + util.array_to_string(
-                mesh.faces + 1 + counts['v'],
-                col_delim=' ',
-                row_delim='\nf ',
-                value_format=face_format))
+        if hasattr(current, "faces"):
+            export.append(
+                "f "
+                + util.array_to_string(
+                    current.faces + 1 + counts["v"],
+                    col_delim=" ",
+                    row_delim="\nf ",
+                    value_format=face_format,
+                )
+            )
         # offset our vertex position
-        counts['v'] += len(mesh.vertices)
+        counts["v"] += len(current.vertices)
 
         # add object name if found in metadata
-        if 'name' in mesh.metadata:
-            export.appendleft(
-                '\no {}'.format(mesh.metadata['name']))
+        if "name" in current.metadata:
+            export.appendleft("\no {}".format(current.metadata["name"]))
         # add this object
-        objects.append('\n'.join(export))
+        objects.append("\n".join(export))
 
-    # add a created-with header to the top of the file
-    objects.appendleft('# https://github.com/mikedh/trimesh')
+    # collect files like images to write
+    mtl_data = {}
+    # combine materials
+    if len(materials) > 0:
+        # collect text for a single mtllib file
+        mtl_lib = []
+        # now loop through: keys are garbage hash
+        # values are (data, name)
+        for data, _ in materials.values():
+            for file_name, file_data in data.items():
+                if file_name.lower().endswith(".mtl"):
+                    # collect mtl lines into single file
+                    mtl_lib.append(file_data)
+                elif file_name not in mtl_data:
+                    # things like images
+                    mtl_data[file_name] = file_data
+                else:
+                    log.warning(f"not writing {file_name}")
+
+        if mtl_name is None:
+            # if no name passed set a default
+            mtl_name = "material.mtl"
+
+        # prepend a header to the MTL text if requested
+        if header is not None:
+            prepend = f"# {header}\n\n".encode()
+        else:
+            prepend = b""
+
+        # save the material data
+        mtl_data[mtl_name] = prepend + b"\n\n".join(mtl_lib)
+        # add the reference to the MTL file
+        objects.appendleft(f"mtllib {mtl_name}")
+
+    if header is not None:
+        # add a created-with header to the top of the file
+        objects.appendleft(f"# {header}")
+
+    # add a trailing newline
+    objects.append("\n")
+
     # combine elements into a single string
-    text = '\n'.join(objects)
+    text = "\n".join(objects)
 
     # if we have a resolver and have asked to write texture
-    if write_texture and resolver is not None and tex_data is not None:
+    if write_texture and resolver is not None and len(materials) > 0:
         # not all resolvers have a write method
-        [resolver.write(k, v) for k, v in tex_data.items()]
+        [resolver.write(k, v) for k, v in mtl_data.items()]
 
     # if we exported texture it changes returned values
     if return_texture:
-        return text, tex_data
+        return text, mtl_data
 
     return text
 
 
-_obj_loaders = {'obj': load_obj}
+_obj_loaders = {"obj": load_obj}

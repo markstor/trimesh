@@ -1,14 +1,14 @@
-[![trimesh](https://trimsh.org/images/logotype-a.svg)](http://trimsh.org)
+[![trimesh](https://trimesh.org/_static/images/logotype-a.svg)](http://trimesh.org)
 
 -----------
-[![Github Actions](https://github.com/mikedh/trimesh/workflows/Release%20Trimesh/badge.svg)](https://github.com/mikedh/trimesh/actions)  [![PyPI version](https://badge.fury.io/py/trimesh.svg)](https://badge.fury.io/py/trimesh) [![codecov](https://codecov.io/gh/mikedh/trimesh/branch/master/graph/badge.svg?token=4PVRQXyl2h)](https://codecov.io/gh/mikedh/trimesh)
+[![Github Actions](https://github.com/mikedh/trimesh/workflows/Release%20Trimesh/badge.svg)](https://github.com/mikedh/trimesh/actions) [![codecov](https://codecov.io/gh/mikedh/trimesh/branch/main/graph/badge.svg?token=4PVRQXyl2h)](https://codecov.io/gh/mikedh/trimesh)  [![Docker Image Version (latest by date)](https://img.shields.io/docker/v/trimesh/trimesh?label=docker&sort=semver)](https://hub.docker.com/r/trimesh/trimesh/tags) [![PyPI version](https://badge.fury.io/py/trimesh.svg)](https://badge.fury.io/py/trimesh)
 
 
-Trimesh is a pure Python (2.7-3.4+) library for loading and using [triangular meshes](https://en.wikipedia.org/wiki/Triangle_mesh) with an emphasis on watertight surfaces. The goal of the library is to provide a full featured and well tested Trimesh object which allows for easy manipulation and analysis, in the style of the Polygon object in the [Shapely library](https://github.com/Toblerity/Shapely).
+Trimesh is a pure Python 3.8+ library for loading and using [triangular meshes](https://en.wikipedia.org/wiki/Triangle_mesh) with an emphasis on watertight surfaces. The goal of the library is to provide a full featured and well tested Trimesh object which allows for easy manipulation and analysis, in the style of the Polygon object in the [Shapely library](https://github.com/Toblerity/Shapely).
 
 The API is mostly stable, but this should not be relied on and is not guaranteed: install a specific version if you plan on deploying something using trimesh.
 
-Pull requests are appreciated and responded to promptly! If you'd like to contribute, here is an [up to date list of potential enhancements](https://github.com/mikedh/trimesh/issues/199) although things not on that list are also welcome. Here are some [tips for writing mesh code in Python.](https://github.com/mikedh/trimesh/blob/master/trimesh/exchange/README.md)
+Pull requests are appreciated and responded to promptly! If you'd like to contribute, here is an [up to date list of potential enhancements](https://github.com/mikedh/trimesh/issues/1557) although things not on that list are also welcome. Here's a quick [development and contributing guide.](https://trimesh.org/contributing.html)
 
 
 ## Basic Installation
@@ -19,17 +19,17 @@ Keeping `trimesh` easy to install is a core goal, thus the *only* hard dependenc
 pip install trimesh
 ```
 
-More functionality is available when soft dependencies are installed. This includes things like convex hulls (`scipy`), graph operations (`networkx`), faster ray queries (`pyembree`), vector path handling (`shapely` and `rtree`), preview windows (`pyglet`), faster cache checks (`xxhash`), etc. To install `trimesh` with the soft dependencies that generally install cleanly on Linux, OSX, and Windows using `pip`:
+The minimal install can load many supported formats (STL, PLY, GLTF/GLB) into numpy arrays. More functionality is available when soft dependencies are installed. This includes things like convex hulls (`scipy`), graph operations (`networkx`), faster ray queries (`embreex`), vector path handling (`shapely` and `rtree`), XML formats like 3DXML/XAML/3MF (`lxml`), preview windows (`pyglet`), faster cache checks (`xxhash`), etc. To install `trimesh` with the soft dependencies that generally install cleanly on Linux (x86_64), MacOS (ARM), and Windows (x86_64) using `pip`:
 ```bash
 pip install trimesh[easy]
 ```
 
-Further information is available in the [advanced installation documentation](https://trimsh.org/install.html).
+If you are supporting a different platform or are freezing your dependencies we recommend you do not use the extras (i.e. depend on `trimesh scipy` versus `trimesh[easy]`.) Further information is available in the [advanced installation documentation](https://trimesh.org/install.html).
 
 ## Quick Start
 
 Here is an example of loading a mesh from file and colorizing its faces. Here is a nicely formatted
-[ipython notebook version](https://trimsh.org/examples/quick_start.html) of this example. Also check out the [cross section example](https://trimsh.org/examples/section.html) or possibly the [integration of a function over a mesh example](https://github.com/mikedh/trimesh/blob/master/examples/integrate.ipynb).
+[ipython notebook version](https://trimesh.org/quick_start.html) of this example. Also check out the [cross section example](https://trimesh.org/section.html).
 
 ```python
 import numpy as np
@@ -92,7 +92,7 @@ mesh.split()
 for facet in mesh.facets:
     mesh.visual.face_colors[facet] = trimesh.visual.random_color()
 
-# preview mesh in an opengl window if you installed pyglet with pip
+# preview mesh in an opengl window if you installed pyglet and scipy with pip
 mesh.show()
 
 # transform method can be passed a (4, 4) matrix and will cleanly apply the transform
@@ -130,7 +130,7 @@ print(mesh.bounding_box_oriented.volume,
 * Import geometry files using the GMSH SDK if installed (BREP, STEP, IGES, INP, BDF, etc)
 * Export meshes as binary STL, binary PLY, ASCII OFF, OBJ, GLTF/GLB 2.0, COLLADA, etc.
 * Export meshes using the GMSH SDK if installed (Abaqus INP, Nastran BDF, etc)
-* Preview meshes using pyglet or in- line in jupyter notebooks using three.js
+* Preview meshes using pyglet or in- line in jupyter/marimo notebooks using three.js
 * Automatic hashing of numpy arrays for change tracking using MD5, zlib CRC, or xxhash
 * Internal caching of computed values validated from hashes
 * Calculate face adjacencies, face angles, vertex defects, etc.
@@ -144,18 +144,17 @@ print(mesh.bounding_box_oriented.volume,
 * Determine if a mesh is watertight, convex, etc.
 * Uniformly sample the surface of a mesh
 * Ray-mesh queries including location, triangle index, etc.
-* Boolean operations on meshes (intersection, union, difference) using OpenSCAD or Blender as a back end. Note that mesh booleans in general are usually slow and unreliable
+* Boolean operations on meshes (intersection, union, difference) using Manifold3D or Blender Note that mesh booleans in general are usually slow and unreliable
 * Voxelize watertight meshes
 * Volume mesh generation (TETgen) using Gmsh SDK
 * Smooth watertight meshes using laplacian smoothing algorithms (Classic, Taubin, Humphrey)
 * Subdivide faces of a mesh
-* Minimum volume oriented bounding boxes for meshes
-* Minimum volume bounding spheres
-* Symbolic integration of functions over triangles
+* Approximate minimum volume oriented bounding boxes for meshes
+* Approximate minimum volume bounding spheres
 * Calculate nearest point on mesh surface and signed distance
 * Determine if a point lies inside or outside of a well constructed mesh using signed distance
 * Primitive objects (Box, Cylinder, Sphere, Extrusion) which are subclassed Trimesh objects and have all the same features (inertia, viewers, etc)
-* Simple scene graph and transform tree which can be rendered (pyglet window, three.js in a jupyter notebook, [pyrender](https://github.com/mmatl/pyrender)) or exported.
+* Simple scene graph and transform tree which can be rendered (pyglet window, three.js in a jupyter/marimo notebook, [pyrender](https://github.com/mmatl/pyrender)) or exported.
 * Many utility functions, like transforming points, unitizing vectors, aligning vectors, tracking numpy arrays for changes, grouping rows, etc.
 
 
@@ -175,7 +174,7 @@ Trimesh includes an optional `pyglet` based viewer for debugging and inspecting.
 * `m` maximizes the window
 * `q` closes the window
 
-If called from inside a `jupyter` notebook, `mesh.show()` displays an in-line preview using `three.js` to display the mesh or scene. For more complete rendering (PBR, better lighting, shaders, better off-screen support, etc) [pyrender](https://github.com/mmatl/pyrender) is designed to interoperate with `trimesh` objects.
+If called from inside a `jupyter` or `marimo` notebook, `mesh.show()` displays an in-line preview using `three.js` to display the mesh or scene. For more complete rendering (PBR, better lighting, shaders, better off-screen support, etc) [pyrender](https://github.com/mmatl/pyrender) is designed to interoperate with `trimesh` objects.
 
 ## Projects Using Trimesh
 
@@ -189,7 +188,7 @@ You can check out the [Github network](https://github.com/mikedh/trimesh/network
 - [urdfpy](https://github.com/mmatl/urdfpy) Load URDF robot descriptions in Python.
 - [moderngl-window](https://github.com/moderngl/moderngl-window) A helper to create GL contexts and load meshes.
 - [vedo](https://github.com/marcomusy/vedo) Visualize meshes interactively (see example [gallery](https://github.com/marcomusy/vedo/tree/master/examples/other/trimesh/)).
-- [fsleyes](https://users.fmrib.ox.ac.uk/~paulmc/fsleyes/userdoc/latest/quick_start.html) View MRI images and brain data.
+- [FSLeyes](https://fsl.fmrib.ox.ac.uk/fsl/fslwiki/FSLeyes) View MRI images and brain data.
 
 ## Which Mesh Format Should I Use?
 
@@ -208,7 +207,7 @@ A question that comes up pretty frequently is [how to cite the library.](https:/
 @software{trimesh,
 	author = {{Dawson-Haggerty et al.}},
 	title = {trimesh},
-	url = {https://trimsh.org/},
+	url = {https://trimesh.org/},
 	version = {3.2.0},
 	date = {2019-12-8},
 }
@@ -216,9 +215,9 @@ A question that comes up pretty frequently is [how to cite the library.](https:/
 
 ## Containers
 
-If you want to deploy something in a container that uses trimesh, automated `debian:buster-slim` based builds with trimesh and dependencies are available on [Docker Hub](https://hub.docker.com/repository/docker/trimesh/trimesh) with image tags for `latest`, git short hash for the commit in master (i.e. `trimesh/trimesh:0c1298d`), and version (i.e. `trimesh/trimesh:3.5.27`):
+If you want to deploy something in a container that uses trimesh automated `debian:slim-bullseye` based builds with trimesh and most dependencies are available on [Docker Hub](https://hub.docker.com/repository/docker/trimesh/trimesh) with image tags for `latest`, git short hash for the commit in `main` (i.e. `trimesh/trimesh:0c1298d`), and version (i.e. `trimesh/trimesh:3.5.27`):
 
 `docker pull trimesh/trimesh`
 
-[Here's an example](https://github.com/mikedh/trimesh/tree/master/examples/dockerRender) of how to render meshes using LLVMpipe and XVFB inside a container.
+[Here's an example](https://github.com/mikedh/trimesh/tree/main/examples/docker/render) of how to render meshes using LLVMpipe and XVFB inside a container.
 

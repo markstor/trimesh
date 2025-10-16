@@ -7,36 +7,38 @@ Fill holes and fix winding and normals of meshes.
 
 import numpy as np
 
-from . import graph
-from . import triangles
-
+from . import graph, triangles
 from .constants import log
-from .grouping import group_rows
 from .geometry import faces_to_edges
-
+from .grouping import group_rows
 
 try:
     import networkx as nx
 except BaseException as E:
     # create a dummy module which will raise the ImportError
     # or other exception only when someone tries to use networkx
-    from .exceptions import ExceptionModule
-    nx = ExceptionModule(E)
+    from .exceptions import ExceptionWrapper
+
+    nx = ExceptionWrapper(E)
+
+try:
+    from .path.exchange.misc import faces_to_path
+except BaseException as E:
+    from .exceptions import ExceptionWrapper
+
+    faces_to_path = ExceptionWrapper(E)
 
 
 def fix_winding(mesh):
     """
-    Traverse and change mesh faces in-place to make sure winding
-    is correct, with edges on adjacent faces in
+    Traverse and change mesh faces in-place to make sure
+    winding is correct with edges on adjacent faces in
     opposite directions.
 
     Parameters
     -------------
-    mesh: Trimesh object
-
-    Notes
-    -------------
-    mesh.face : will reverse columns of certain faces
+    mesh : Trimesh
+      Source geometry to alter in-place.
     """
     # anything we would fix is already done
     if mesh.is_winding_consistent:
@@ -68,8 +70,7 @@ def fix_winding(mesh):
             pair = faces[face_pair]
             # (6, 2) int
             edges = faces_to_edges(pair)
-            overlap = group_rows(np.sort(edges, axis=1),
-                                 require_count=2)
+            overlap = group_rows(np.sort(edges, axis=1), require_count=2)
             if len(overlap) == 0:
                 # only happens on non-watertight meshes
                 continue
@@ -82,7 +83,7 @@ def fix_winding(mesh):
     if flipped > 0:
         mesh.faces = faces
 
-    log.debug('flipped %d/%d edges', flipped, len(mesh.faces) * 3)
+    log.debug("flipped %d/%d edges", flipped, len(mesh.faces) * 3)
 
 
 def fix_inversion(mesh, multibody=False):
@@ -92,14 +93,14 @@ def fix_inversion(mesh, multibody=False):
     Parameters
     -------------
     mesh : trimesh.Trimesh
-      Mesh to fix.
+      Mesh to fix in-place.
     multibody : bool
       If True will try to fix normals on every body
-
-    Notes
-    -------------
-    mesh.face : may reverse faces
     """
+    if not mesh.is_watertight:
+        # this will make things worse for non-watertight meshes
+        return
+
     if multibody:
         groups = graph.connected_components(mesh.face_adjacency)
         # escape early for single body
@@ -116,9 +117,8 @@ def fix_inversion(mesh, multibody=False):
         for faces in groups:
             # calculate the volume of the submesh faces
             volume = triangles.mass_properties(
-                tri[faces],
-                crosses=cross[faces],
-                skip_inertia=True)['volume']
+                tri[faces], crosses=cross[faces], skip_inertia=True
+            )["volume"]
             # if that volume is negative it is either
             # inverted or just total garbage
             if volume < 0.0:
@@ -126,7 +126,7 @@ def fix_inversion(mesh, multibody=False):
         # one or more faces needs flipping
         if flip.any():
             # flip normals of necessary faces
-            if 'face_normals' in mesh._cache:
+            if "face_normals" in mesh._cache:
                 normals = mesh.face_normals.copy()
                 normals[flip] *= -1.0
             else:
@@ -185,8 +185,7 @@ def broken_faces(mesh, color=None):
       Indexes of mesh.faces
     """
     adjacency = nx.from_edgelist(mesh.face_adjacency)
-    broken = [k for k, v in dict(adjacency.degree()).items()
-              if v != 3]
+    broken = [k for k, v in dict(adjacency.degree()).items() if v != 3]
     broken = np.array(broken)
     if color is not None and broken.size != 0:
         # if someone passed a broken color
@@ -247,8 +246,7 @@ def fill_holes(mesh):
 
     # we know that in a watertight mesh every edge will be included twice
     # thus every edge which appears only once is part of a hole boundary
-    boundary_groups = group_rows(
-        mesh.edges_sorted, require_count=1)
+    boundary_groups = group_rows(mesh.edges_sorted, require_count=1)
 
     # mesh is not watertight and we have too few edges
     # edges to do a repair
@@ -257,12 +255,10 @@ def fill_holes(mesh):
         return False
 
     boundary_edges = mesh.edges[boundary_groups]
-    index_as_dict = [{'index': i} for i in boundary_groups]
+    index_as_dict = [{"index": i} for i in boundary_groups]
 
     # we create a graph of the boundary edges, and find cycles.
-    g = nx.from_edgelist(
-        np.column_stack((boundary_edges,
-                         index_as_dict)))
+    g = nx.from_edgelist(np.column_stack((boundary_edges, index_as_dict)))
     new_faces = []
     new_vertex = []
     for hole in nx.cycle_basis(g):
@@ -290,7 +286,7 @@ def fill_holes(mesh):
         # we compare the edge from the new face with
         # the boundary edge from the source mesh
         edge_test = face[:2]
-        edge_boundary = mesh.edges[g.get_edge_data(*edge_test)['index']]
+        edge_boundary = mesh.edges[g.get_edge_data(*edge_test)["index"]]
 
         # in a well constructed mesh, the winding is such that adjacent triangles
         # have reversed edges to each other. Here we check to make sure the
@@ -306,8 +302,8 @@ def fill_holes(mesh):
         new_vertices = mesh.vertices
 
     # try to save face normals if we can
-    if 'face_normals' in mesh._cache.cache:
-        cached_normals = mesh._cache.cache['face_normals']
+    if "face_normals" in mesh._cache.cache:
+        cached_normals = mesh._cache.cache["face_normals"]
     else:
         cached_normals = None
 
@@ -321,13 +317,13 @@ def fill_holes(mesh):
     # over tol.merge apart, but the normal calculation is screwed up
     # these could be fixed by merging the vertices in question here:
     # if not valid.all():
-    if mesh.visual.defined and mesh.visual.kind == 'face':
+    if mesh.visual.defined and mesh.visual.kind == "face":
         color = mesh.visual.face_colors
     else:
         color = None
 
     # apply the new faces and vertices
-    mesh.faces = np.vstack((mesh._data['faces'], new_faces[valid]))
+    mesh.faces = np.vstack((mesh._data["faces"], new_faces[valid]))
     mesh.vertices = new_vertices
 
     # dump the cache and set id to the new hash
@@ -335,8 +331,7 @@ def fill_holes(mesh):
 
     # save us a normals recompute if we can
     if cached_normals is not None:
-        mesh.face_normals = np.vstack((cached_normals,
-                                       new_normals))
+        mesh.face_normals = np.vstack((cached_normals, new_normals))
 
     # this is usually the case where two vertices of a triangle are just
     # over tol.merge apart, but the normal calculation is screwed up
@@ -349,9 +344,111 @@ def fill_holes(mesh):
         color_shape = np.shape(color)
         if len(color_shape) == 2:
             new_colors = np.tile(color[-1], (np.sum(valid), 1))
-            new_colors = np.vstack((color,
-                                    new_colors))
+            new_colors = np.vstack((color, new_colors))
             mesh.visual.face_colors = new_colors
 
-    log.debug('Filled in mesh with %i triangles', np.sum(valid))
+    log.debug("Filled in mesh with %i triangles", np.sum(valid))
     return mesh.is_watertight
+
+
+def stitch(mesh, faces=None, insert_vertices=False):
+    """
+    Create a fan stitch over the boundary of the specified
+    faces. If the boundary is non-convex a triangle fan
+    is going to be extremely wonky.
+
+    Parameters
+    -----------
+    mesh : trimesh.Trimesh
+      Mesh to create fan stitch on.
+    faces : (n,) int
+      Face indexes to stitch with triangle fans.
+    insert_vertices : bool
+      Allow stitching to insert new vertices?
+
+    Returns
+    ----------
+    fan : (m, 3) int
+      New triangles referencing mesh.vertices.
+    vertices : (p, 3) float
+      Inserted vertices (only returned `if insert_vertices`)
+    """
+    if faces is None:
+        faces = np.arange(len(mesh.faces))
+
+    # get a sequence of vertex indices representing the
+    # boundary of the specified faces
+    # will be referencing the same indexes of `mesh.vertices`
+    points = [
+        e.points
+        for e in faces_to_path(mesh, faces)["entities"]
+        if len(e.points) > 3 and e.points[0] == e.points[-1]
+    ]
+
+    # get properties to avoid querying in loop
+    vertices = mesh.vertices
+    normals = mesh.face_normals
+
+    # find which faces are associated with an edge
+    edges_face = mesh.edges_face
+    tree_edge = mesh.edges_sorted_tree
+
+    if insert_vertices:
+        # create one new vertex per curve at the centroid
+        centroids = np.array([vertices[p].mean(axis=0) for p in points])
+        # save the original length of the vertices
+        count = len(vertices)
+        # for the normal check stack our local vertices
+        vertices = np.vstack((vertices, centroids))
+        # create a triangle between our new centroid vertex
+        # and each one of the boundary curves
+        fan = [
+            np.column_stack((np.ones(len(p) - 1, dtype=int) * (count + i), p[:-1], p[1:]))
+            for i, p in enumerate(points)
+        ]
+    else:
+        # since we're not allowed to insert new vertices
+        # create a triangle fan for each boundary curve
+        fan = [
+            np.column_stack((np.ones(len(p) - 3, dtype=int) * p[0], p[1:-2], p[2:-1]))
+            for p in points
+        ]
+
+    # now we do a normal check against an adjacent face
+    # to see if each region needs to be flipped
+    for i, t in zip(range(len(fan)), fan):
+        # get the edges from the original mesh
+        # for the first `n` new triangles
+        e = t[:10, 1:].copy()
+        e.sort(axis=1)
+
+        # find which indexes of `mesh.edges` these
+        # new edges correspond with by finding edges
+        # that exactly correspond with the tree
+        query = tree_edge.query_ball_point(e, r=1e-10)
+        if len(query) == 0:
+            continue
+        # stack all the indices that exist
+        edge_index = np.concatenate(query)
+
+        # get the normals from the original mesh
+        original = normals[edges_face[edge_index]]
+
+        # calculate the normals for a few new faces
+        check, valid = triangles.normals(vertices[t[:3]])
+        if not valid.any():
+            continue
+        # take the first valid normal from our new faces
+        check = check[0]
+
+        # if our new faces are reversed from the original
+        # Adjacent face flip them along their axis
+        sign = np.dot(original, check)
+        if sign.mean() < 0:
+            fan[i] = np.fliplr(t)
+
+    fan = np.vstack(fan)
+
+    if insert_vertices:
+        return fan, centroids
+    return fan
