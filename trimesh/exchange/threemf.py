@@ -432,7 +432,7 @@ def export_3MF(mesh, batch_size=4096, compression=zipfile.ZIP_DEFLATED, compress
                             etree.Element(
                                 "item",
                                 {
-                                    "objectid": model_id(data['geometry']),
+                                    "objectid": model_id(data.get('geometry', node)),
                                     "transform": transform,
                                     uuid_tag: str(uuid.uuid4()),
                                     "partnumber": node,
